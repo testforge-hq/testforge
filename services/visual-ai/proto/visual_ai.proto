@@ -1,0 +1,236 @@
+syntax = "proto3";
+
+package visualai;
+
+option go_package = "github.com/testforge/testforge/internal/visualai/proto";
+
+service VisualAIService {
+    // Fast comparison using DINOv2 (default)
+    rpc CompareFrames(CompareFramesRequest) returns (CompareFramesResponse);
+
+    // Sequence-aware stability detection using V-JEPA 2
+    rpc DetectStability(DetectStabilityRequest) returns (DetectStabilityResponse);
+
+    // Self-healing validation using V-JEPA 2 (understands state transitions)
+    rpc ValidateHealing(ValidateHealingRequest) returns (ValidateHealingResponse);
+
+    // Generate embedding (specify model)
+    rpc GenerateEmbedding(GenerateEmbeddingRequest) returns (GenerateEmbeddingResponse);
+
+    // Batch comparison
+    rpc BatchCompare(BatchCompareRequest) returns (BatchCompareResponse);
+
+    // Find element by description using SigLIP
+    rpc FindByDescription(FindByDescriptionRequest) returns (FindByDescriptionResponse);
+
+    // Analyze visual change between frames
+    rpc AnalyzeChange(AnalyzeChangeRequest) returns (AnalyzeChangeResponse);
+
+    // Health check
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Model selection
+enum ModelType {
+    MODEL_AUTO = 0;       // Let router decide
+    MODEL_DINOV2 = 1;     // Fast, single-frame
+    MODEL_VJEPA2 = 2;     // Video/sequence understanding
+    MODEL_SIGLIP = 3;     // Text-image alignment
+}
+
+message CompareFramesRequest {
+    bytes baseline_data = 1;
+    string baseline_uri = 2;
+    bytes actual_data = 3;
+    string actual_uri = 4;
+    string context = 5;
+
+    CompareSettings settings = 6;
+    ModelType model = 7;  // Default: AUTO (uses DINOv2)
+}
+
+message CompareFramesResponse {
+    float similarity_score = 1;
+    bool semantic_match = 2;
+    float confidence = 3;
+    string analysis = 4;
+    string model_used = 5;
+    repeated ChangedRegion changed_regions = 6;
+}
+
+message CompareSettings {
+    float similarity_threshold = 1;  // Default 0.85
+    bool ignore_colors = 2;
+    bool ignore_minor_layout = 3;
+    repeated Region ignore_regions = 4;
+}
+
+// V-JEPA 2 specific: Validates healing with before/during/after frames
+message ValidateHealingRequest {
+    // Frame sequence: before action, during transition, after action
+    repeated bytes frame_sequence = 1;
+    repeated string frame_uris = 2;
+
+    // Expected outcome
+    bytes expected_state = 3;
+    string expected_state_uri = 4;
+
+    // Context
+    string action_performed = 5;
+    string original_selector = 6;
+    string new_selector = 7;
+
+    // Settings
+    float similarity_threshold = 8;  // Default 0.85
+}
+
+message ValidateHealingResponse {
+    bool valid = 1;                    // Did the healing produce correct outcome?
+    float semantic_similarity = 2;     // 0-1 similarity to expected
+    float state_confidence = 3;        // Confidence in state assessment
+
+    // V-JEPA 2 specific analysis
+    string transition_analysis = 4;    // What happened during transition
+    bool expected_transition = 5;      // Was the transition expected for this action?
+
+    // Detailed breakdown
+    repeated StateComparison state_comparisons = 6;
+}
+
+message StateComparison {
+    string frame_pair = 1;             // "before_vs_after", "actual_vs_expected"
+    float similarity = 2;
+    string analysis = 3;
+}
+
+// V-JEPA 2 specific: Stability from frame sequence
+message DetectStabilityRequest {
+    repeated bytes frames = 1;
+    repeated string frame_uris = 2;
+
+    float stability_threshold = 3;     // Default 0.98
+    int32 min_stable_frames = 4;       // Default 3
+    int32 max_wait_frames = 5;         // Max frames to analyze
+}
+
+message DetectStabilityResponse {
+    bool is_stable = 1;
+    int32 stable_at_frame = 2;
+    float stability_score = 3;
+
+    // V-JEPA 2 specific
+    string motion_analysis = 4;        // "loading spinner", "animation", "static"
+    repeated string detected_activities = 5;  // ["spinner", "fade_in", "scroll"]
+}
+
+// SigLIP specific: Find element by text description
+message FindByDescriptionRequest {
+    bytes screenshot = 1;
+    string screenshot_uri = 2;
+
+    string description = 3;            // "blue submit button", "login form"
+    int32 max_results = 4;             // Default 5
+}
+
+message FindByDescriptionResponse {
+    repeated FoundElement elements = 1;
+}
+
+message FoundElement {
+    Region region = 1;
+    float confidence = 2;
+    string matched_description = 3;
+}
+
+message GenerateEmbeddingRequest {
+    bytes image_data = 1;
+    string image_uri = 2;
+
+    ModelType model = 3;               // Which encoder to use
+    bool normalize = 4;
+}
+
+message GenerateEmbeddingResponse {
+    bytes embedding = 1;
+    int32 embedding_dim = 2;
+    string model_used = 3;
+    string model_version = 4;
+}
+
+message BatchCompareRequest {
+    repeated FramePair pairs = 1;
+    CompareSettings settings = 2;
+    ModelType model = 3;
+}
+
+message BatchCompareResponse {
+    repeated PairResult results = 1;
+    float average_similarity = 2;
+    int32 matches = 3;
+    int32 mismatches = 4;
+}
+
+message FramePair {
+    string pair_id = 1;
+    bytes baseline_data = 2;
+    string baseline_uri = 3;
+    bytes actual_data = 4;
+    string actual_uri = 5;
+    string context = 6;
+}
+
+message PairResult {
+    string pair_id = 1;
+    float similarity_score = 2;
+    bool semantic_match = 3;
+    string analysis = 4;
+}
+
+message AnalyzeChangeRequest {
+    bytes before_data = 1;
+    string before_uri = 2;
+    bytes after_data = 3;
+    string after_uri = 4;
+    string action_performed = 5;
+}
+
+message AnalyzeChangeResponse {
+    string description = 1;
+    repeated string changes = 2;
+    bool expected_change = 3;
+    float confidence = 4;
+    string change_type = 5;      // "content", "layout", "style", "none"
+    string severity = 6;         // "major", "minor", "cosmetic"
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+    bool healthy = 1;
+    map<string, ModelHealth> models = 2;
+    string device = 3;
+    int64 total_memory_mb = 4;
+    int64 used_memory_mb = 5;
+}
+
+message ModelHealth {
+    bool loaded = 1;
+    string version = 2;
+    string license = 3;
+    int64 memory_mb = 4;
+    float avg_inference_ms = 5;
+}
+
+message Region {
+    int32 x = 1;
+    int32 y = 2;
+    int32 width = 3;
+    int32 height = 4;
+}
+
+message ChangedRegion {
+    Region region = 1;
+    string change_type = 2;
+    float significance = 3;
+    string description = 4;
+}

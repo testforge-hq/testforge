@@ -1,0 +1,86 @@
+# Visual AI Service Configuration
+
+visual_ai:
+  device: "cuda"  # cuda, cpu, or mps
+
+  # Models to load (all commercially safe)
+  models:
+    - dinov2   # Always-on baseline (Apache 2.0) - ~1.5GB VRAM
+    - vjepa2   # On-demand for sequences (MIT + Apache 2.0) - ~3GB VRAM
+    # - siglip # Optional: text search (Apache 2.0) - ~1.5GB VRAM
+
+  # Routing preferences
+  routing:
+    healing_validation: vjepa2
+    stability_detection: vjepa2
+    simple_comparison: dinov2
+    embedding_default: dinov2
+    text_search: siglip
+
+  # Performance
+  precision: fp16
+  batch_size: 4
+  max_message_size_mb: 100
+
+  # License verification (for compliance)
+  license_verification:
+    enabled: true
+    allowed:
+      - "Apache-2.0"
+      - "MIT"
+      - "BSD-3-Clause"
+
+# Model registry with license information (for audit)
+model_registry:
+  dinov2:
+    name: "DINOv2-giant"
+    source: "facebook/dinov2-giant"
+    license: "Apache-2.0"
+    url: "https://github.com/facebookresearch/dinov2"
+    commercial_use: true
+    typical_vram_mb: 1500
+    typical_latency_ms: 50
+    best_for:
+      - "fast comparison"
+      - "embeddings"
+      - "visual regression"
+
+  vjepa2:
+    name: "V-JEPA 2"
+    source: "facebook/vjepa2-vitg-fpc64-384"
+    license: "MIT + Apache-2.0"
+    url: "https://github.com/facebookresearch/vjepa2"
+    commercial_use: true
+    typical_vram_mb: 3000
+    typical_latency_ms: 150
+    best_for:
+      - "sequences"
+      - "stability detection"
+      - "self-healing validation"
+      - "state transitions"
+
+  siglip:
+    name: "SigLIP-large"
+    source: "google/siglip-large-patch16-384"
+    license: "Apache-2.0"
+    url: "https://huggingface.co/google/siglip-large-patch16-384"
+    commercial_use: true
+    typical_vram_mb: 1500
+    typical_latency_ms: 60
+    best_for:
+      - "text-to-image search"
+      - "semantic matching"
+      - "element description"
+
+# Server configuration
+server:
+  port: 50051
+  max_workers: 4
+  max_message_size: 104857600  # 100MB
+
+# MinIO/S3 configuration
+minio:
+  endpoint: "localhost:9000"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  secure: false

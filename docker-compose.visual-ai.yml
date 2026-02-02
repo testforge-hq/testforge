@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  visual-ai:
+    build:
+      context: ./services/visual-ai
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+    environment:
+      - VISUAL_AI_MODELS=dinov2,vjepa2
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - visual-ai-models:/root/.cache/torch/hub
+      - visual-ai-hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; c=grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(c).result(timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - testforge-network
+    # For GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  visual-ai-models:
+  visual-ai-hf-cache:
+
+networks:
+  testforge-network:
+    external: true

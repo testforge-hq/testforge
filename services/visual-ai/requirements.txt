@@ -1,0 +1,26 @@
+# Visual AI Service Dependencies
+
+# Core ML
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.35.0
+
+# gRPC
+grpcio>=1.59.0
+grpcio-tools>=1.59.0
+protobuf>=4.24.0
+
+# Image processing
+Pillow>=10.0.0
+
+# MinIO client
+minio>=7.2.0
+
+# Utilities
+numpy>=1.24.0
+
+# Logging
+coloredlogs>=15.0.0
+
+# Optional: CLIP fallback for SigLIP
+# git+https://github.com/openai/CLIP.git
