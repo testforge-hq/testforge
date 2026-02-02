@@ -83,6 +83,5 @@ test-results/
 playwright-report/
 *.pdf
 
-# Demo output and binaries
-demo/
-demo
+# Demo output binary (in root directory)
+/demo

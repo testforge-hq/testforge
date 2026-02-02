@@ -120,7 +120,7 @@ func main() {
 	//==========================================================================
 	printStep(2, "Test Design", "Claude AI generating test cases...")
 
-	testSuite, err := runTestDesign(ctx, claudeClient, appModel, *maxTests, logger)
+	testSuite, warnings, err := runTestDesign(ctx, claudeClient, appModel, *maxTests, logger)
 	if err != nil {
 		red.Printf("   ❌ Test design failed: %v\n", err)
 		// Use mock data
@@ -128,7 +128,23 @@ func main() {
 		testSuite = mockTestSuite(appModel)
 	}
 
+	// Show warnings if any
+	if len(warnings) > 0 && *verbose {
+		yellow.Println("   ⚠ Test design warnings:")
+		for _, w := range warnings {
+			dim.Printf("      • %s\n", w)
+		}
+	}
+
 	testSuite.CalculateStats()
+
+	// Fall back to mock data if no tests were generated
+	if testSuite.Stats.TotalTestCases == 0 {
+		yellow.Println("   ⚠ No tests generated, using simulated test suite...")
+		testSuite = mockTestSuite(appModel)
+		testSuite.CalculateStats()
+	}
+
 	green.Printf("   ✓ Generated %d test cases across %d features\n",
 		testSuite.Stats.TotalTestCases,
 		testSuite.Stats.TotalFeatures)
@@ -447,7 +463,7 @@ func runDiscovery(ctx context.Context, url string, maxPages int, outputDir strin
 	return result, err
 }
 
-func runTestDesign(ctx context.Context, client *llm.ClaudeClient, appModel *discovery.AppModel, maxTests int, logger *zap.Logger) (*testdesign.TestSuite, error) {
+func runTestDesign(ctx context.Context, client *llm.ClaudeClient, appModel *discovery.AppModel, maxTests int, logger *zap.Logger) (*testdesign.TestSuite, []string, error) {
 	bar := progressbar.NewOptions(-1,
 		progressbar.OptionSetDescription("   Generating tests..."),
 		progressbar.OptionSpinnerType(14),
@@ -484,10 +500,10 @@ func runTestDesign(ctx context.Context, client *llm.ClaudeClient, appModel *disc
 	bar.Finish()
 
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return output.Suite, nil
+	return output.Suite, output.ValidationWarns, nil
 }
 
 func runScriptGeneration(ctx context.Context, suite *testdesign.TestSuite, outputDir string, logger *zap.Logger) (string, int, error) {
