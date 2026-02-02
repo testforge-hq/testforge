@@ -268,4 +268,145 @@ func TestTestRunRepository(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, domain.IsNotFoundError(err))
 	})
+
+	t.Run("GetByTenantID", func(t *testing.T) {
+		testDB.TruncateTables(t)
+		tenant, project := createTestTenantAndProject(t)
+
+		// Create multiple runs
+		for i := 0; i < 5; i++ {
+			run := domain.NewTestRun(tenant.ID, project.ID, "https://example.com", "api")
+			err := runRepo.Create(ctx, run)
+			require.NoError(t, err)
+		}
+
+		// List with pagination
+		runs, total, err := runRepo.GetByTenantID(ctx, tenant.ID, 3, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 5, total)
+		assert.Len(t, runs, 3)
+
+		// Second page
+		runs, total, err = runRepo.GetByTenantID(ctx, tenant.ID, 3, 3)
+		require.NoError(t, err)
+		assert.Equal(t, 5, total)
+		assert.Len(t, runs, 2)
+	})
+
+	t.Run("GetByTenantID_Empty", func(t *testing.T) {
+		testDB.TruncateTables(t)
+		tenant, _ := createTestTenantAndProject(t)
+
+		runs, total, err := runRepo.GetByTenantID(ctx, tenant.ID, 10, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 0, total)
+		assert.Empty(t, runs)
+	})
+
+	t.Run("Update_WithDiscoveryResult", func(t *testing.T) {
+		testDB.TruncateTables(t)
+		tenant, project := createTestTenantAndProject(t)
+
+		run := domain.NewTestRun(tenant.ID, project.ID, "https://example.com", "api")
+		err := runRepo.Create(ctx, run)
+		require.NoError(t, err)
+
+		// Update with discovery result
+		run.Status = domain.RunStatusDesigning
+		run.DiscoveryResult = &domain.DiscoveryResult{
+			Pages: []domain.DiscoveredPage{
+				{URL: "https://example.com", Title: "Home", PageType: "landing"},
+				{URL: "https://example.com/about", Title: "About", PageType: "detail"},
+			},
+			TotalPages: 2,
+			TotalForms: 1,
+			TotalLinks: 10,
+			TechStack:  []string{"React", "Tailwind"},
+		}
+
+		err = runRepo.Update(ctx, run)
+		require.NoError(t, err)
+
+		fetched, err := runRepo.GetByID(ctx, run.ID)
+		require.NoError(t, err)
+		assert.NotNil(t, fetched.DiscoveryResult)
+		assert.Len(t, fetched.DiscoveryResult.Pages, 2)
+		assert.Equal(t, 2, fetched.DiscoveryResult.TotalPages)
+		assert.Contains(t, fetched.DiscoveryResult.TechStack, "React")
+	})
+
+	t.Run("Update_WithTestPlan", func(t *testing.T) {
+		testDB.TruncateTables(t)
+		tenant, project := createTestTenantAndProject(t)
+
+		run := domain.NewTestRun(tenant.ID, project.ID, "https://example.com", "api")
+		err := runRepo.Create(ctx, run)
+		require.NoError(t, err)
+
+		// Update with test plan
+		run.Status = domain.RunStatusAutomating
+		run.TestPlan = &domain.TestPlan{
+			ID:         uuid.New().String(),
+			TotalCount: 5,
+			ByPriority: map[domain.Priority]int{
+				domain.PriorityHigh:   2,
+				domain.PriorityMedium: 3,
+			},
+			GeneratedAt: time.Now().UTC(),
+		}
+
+		err = runRepo.Update(ctx, run)
+		require.NoError(t, err)
+
+		fetched, err := runRepo.GetByID(ctx, run.ID)
+		require.NoError(t, err)
+		assert.NotNil(t, fetched.TestPlan)
+		assert.Equal(t, 5, fetched.TestPlan.TotalCount)
+	})
+
+	t.Run("Update_NotFound", func(t *testing.T) {
+		testDB.TruncateTables(t)
+
+		run := &domain.TestRun{
+			ID:     uuid.New(),
+			Status: domain.RunStatusCompleted,
+		}
+		run.SetTimestamps()
+
+		err := runRepo.Update(ctx, run)
+		require.Error(t, err)
+		assert.True(t, domain.IsNotFoundError(err))
+	})
+
+	t.Run("Delete_NotFound", func(t *testing.T) {
+		testDB.TruncateTables(t)
+
+		err := runRepo.Delete(ctx, uuid.New())
+		require.Error(t, err)
+		assert.True(t, domain.IsNotFoundError(err))
+	})
+
+	t.Run("Update_WorkflowInfo", func(t *testing.T) {
+		testDB.TruncateTables(t)
+		tenant, project := createTestTenantAndProject(t)
+
+		run := domain.NewTestRun(tenant.ID, project.ID, "https://example.com", "api")
+		err := runRepo.Create(ctx, run)
+		require.NoError(t, err)
+
+		// Update with workflow info
+		run.WorkflowID = "workflow-123"
+		run.WorkflowRunID = "run-456"
+		now := time.Now().UTC()
+		run.StartedAt = &now
+
+		err = runRepo.Update(ctx, run)
+		require.NoError(t, err)
+
+		fetched, err := runRepo.GetByID(ctx, run.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "workflow-123", fetched.WorkflowID)
+		assert.Equal(t, "run-456", fetched.WorkflowRunID)
+		assert.NotNil(t, fetched.StartedAt)
+	})
 }
