@@ -184,8 +184,9 @@ func (e *Extractor) extractFormFields(form playwright.Locator) ([]FieldModel, er
 func (e *Extractor) extractButtons(page playwright.Page) ([]ButtonModel, error) {
 	var buttons []ButtonModel
 
-	// Query for buttons including role="button"
-	buttonLocators := page.Locator(`button, input[type="button"], input[type="submit"], [role="button"]`)
+	// Query for buttons including role="button" and clickable elements
+	// Also include common clickable patterns in SPAs
+	buttonLocators := page.Locator(`button, input[type="button"], input[type="submit"], [role="button"], [onclick], .btn, [class*="button"]`)
 	count, err := buttonLocators.Count()
 	if err != nil {
 		return buttons, err
@@ -265,8 +266,9 @@ func (e *Extractor) extractLinks(page playwright.Page, baseURL string) ([]LinkMo
 func (e *Extractor) extractInputs(page playwright.Page) ([]InputModel, error) {
 	var inputs []InputModel
 
-	// Find inputs not inside forms
-	inputLocators := page.Locator("input:not(form input):not([type='hidden']):not([type='submit']):not([type='button'])")
+	// Find ALL inputs including those not in forms
+	// This catches SPA inputs that may not be wrapped in form tags
+	inputLocators := page.Locator(`input:visible:not([type='hidden']):not([type='submit']):not([type='button']), textarea:visible, select:visible`)
 	count, err := inputLocators.Count()
 	if err != nil {
 		return inputs, err

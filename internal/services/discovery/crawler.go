@@ -374,9 +374,9 @@ func (c *Crawler) crawlPage(ctx context.Context, page playwright.Page, task Craw
 	result := CrawlResult{}
 	startTime := time.Now()
 
-	// Navigate to the page
+	// Navigate to the page - use networkidle to wait for JS frameworks to render
 	resp, err := page.Goto(task.URL, playwright.PageGotoOptions{
-		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		WaitUntil: playwright.WaitUntilStateNetworkidle, // Wait for network to settle (JS loaded)
 		Timeout:   playwright.Float(float64(c.config.Timeout.Milliseconds())),
 	})
 	if err != nil {
@@ -390,11 +390,16 @@ func (c *Crawler) crawlPage(ctx context.Context, page playwright.Page, task Craw
 		return result
 	}
 
-	// Wait for page to settle (short timeout - don't wait too long)
+	// Wait for page to fully settle - important for SPAs (React, Vue, Angular)
+	// First wait for network idle
 	page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
-		State:   playwright.LoadStateDomcontentloaded,
-		Timeout: playwright.Float(3000),
+		State:   playwright.LoadStateNetworkidle,
+		Timeout: playwright.Float(10000), // 10 seconds for slow SPAs
 	})
+
+	// Additional wait for JavaScript frameworks to finish rendering
+	// This catches late-rendering components in React/Vue/Angular apps
+	page.WaitForTimeout(1500)
 
 	loadTime := time.Since(startTime)
 
