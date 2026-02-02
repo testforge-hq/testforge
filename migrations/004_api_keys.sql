@@ -40,9 +40,11 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 -- Index for fast key lookup (most common query)
+-- Note: Cannot use NOW() in index predicate as it's not IMMUTABLE
+-- Expiration is checked at query time
 CREATE INDEX IF NOT EXISTS idx_api_keys_hash_active
     ON api_keys(key_hash)
-    WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW());
+    WHERE revoked_at IS NULL;
 
 -- Index for listing keys by tenant
 CREATE INDEX IF NOT EXISTS idx_api_keys_tenant

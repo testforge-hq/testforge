@@ -203,7 +203,7 @@ SELECT
     (SELECT COUNT(*) FROM users) as total_users,
     (SELECT COUNT(*) FROM projects) as total_projects,
     (SELECT COUNT(*) FROM test_runs) as total_test_runs,
-    (SELECT COUNT(*) FROM test_runs WHERE status IN ('pending', 'running')) as running_tests,
+    (SELECT COUNT(*) FROM test_runs WHERE status IN ('pending', 'discovering', 'designing', 'automating', 'executing', 'healing', 'reporting')) as running_tests,
     (SELECT COALESCE(SUM(
         CASE plan
             WHEN 'pro' THEN 99
@@ -221,11 +221,11 @@ SELECT
     s.plan,
     s.status as subscription_status,
     (SELECT COUNT(*) FROM test_runs WHERE tenant_id = t.id AND started_at > NOW() - INTERVAL '7 days') as runs_last_week,
-    (SELECT COUNT(*) FROM test_runs WHERE tenant_id = t.id AND status = 'error' AND started_at > NOW() - INTERVAL '7 days') as errors_last_week,
+    (SELECT COUNT(*) FROM test_runs WHERE tenant_id = t.id AND status = 'failed' AND started_at > NOW() - INTERVAL '7 days') as errors_last_week,
     (SELECT MAX(started_at) FROM test_runs WHERE tenant_id = t.id) as last_activity,
     CASE
         WHEN (SELECT MAX(started_at) FROM test_runs WHERE tenant_id = t.id) < NOW() - INTERVAL '30 days' THEN 'inactive'
-        WHEN (SELECT COUNT(*) FROM test_runs WHERE tenant_id = t.id AND status = 'error' AND started_at > NOW() - INTERVAL '7 days') > 10 THEN 'unhealthy'
+        WHEN (SELECT COUNT(*) FROM test_runs WHERE tenant_id = t.id AND status = 'failed' AND started_at > NOW() - INTERVAL '7 days') > 10 THEN 'unhealthy'
         ELSE 'healthy'
     END as health_status
 FROM tenants t

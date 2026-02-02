@@ -88,6 +88,13 @@ type Timestamps struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
 }
 
+// SetTimestamps sets CreatedAt and UpdatedAt to current time
+func (t *Timestamps) SetTimestamps() {
+	now := time.Now().UTC()
+	t.CreatedAt = now
+	t.UpdatedAt = now
+}
+
 // JSONB is a wrapper for JSON data stored in PostgreSQL JSONB columns
 type JSONB map[string]any
 

@@ -6,96 +6,55 @@ import (
 	"testing"
 )
 
-// Define test errors for this test file
-var (
-	ErrNotFound       = errors.New("not found")
-	ErrAlreadyExists  = errors.New("already exists")
-	ErrInvalidInput   = errors.New("invalid input")
-	ErrUnauthorized   = errors.New("unauthorized")
-	ErrForbidden      = errors.New("forbidden")
-	ErrInternal       = errors.New("internal error")
-	ErrServiceUnavail = errors.New("service unavailable")
-)
-
-// Error represents a domain error with additional context
-type Error struct {
-	Code       string
-	Message    string
-	HTTPStatus int
-	Err        error
-}
-
-func (e *Error) Error() string {
-	if e.Err != nil {
-		return e.Message + ": " + e.Err.Error()
-	}
-	return e.Message
-}
-
-func (e *Error) Unwrap() error {
-	return e.Err
-}
-
-// NewError creates a new domain error
-func NewError(code, message string, status int, err error) *Error {
-	return &Error{
-		Code:       code,
-		Message:    message,
-		HTTPStatus: status,
-		Err:        err,
-	}
-}
-
-func TestError_Error(t *testing.T) {
+func TestAppError_Error(t *testing.T) {
 	tests := []struct {
-		name    string
-		err     *Error
-		want    string
+		name string
+		err  *AppError
+		want string
 	}{
 		{
-			name: "error without wrapped error",
-			err: &Error{
-				Code:    "NOT_FOUND",
+			name: "error without cause",
+			err: &AppError{
+				Code:    ErrCodeNotFound,
 				Message: "Resource not found",
 			},
-			want: "Resource not found",
+			want: "[NOT_FOUND] Resource not found",
 		},
 		{
-			name: "error with wrapped error",
-			err: &Error{
-				Code:    "NOT_FOUND",
+			name: "error with cause",
+			err: &AppError{
+				Code:    ErrCodeNotFound,
 				Message: "Resource not found",
-				Err:     errors.New("id: 123"),
+				Cause:   errors.New("id: 123"),
 			},
-			want: "Resource not found: id: 123",
+			want: "[NOT_FOUND] Resource not found: id: 123",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.err.Error(); got != tt.want {
-				t.Errorf("Error.Error() = %q, want %q", got, tt.want)
+				t.Errorf("AppError.Error() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestError_Unwrap(t *testing.T) {
+func TestAppError_Unwrap(t *testing.T) {
 	inner := errors.New("inner error")
-	err := &Error{
+	err := &AppError{
 		Code:    "TEST",
 		Message: "outer error",
-		Err:     inner,
+		Cause:   inner,
 	}
 
 	if !errors.Is(err, inner) {
-		t.Error("Error.Unwrap() should allow errors.Is to find inner error")
+		t.Error("AppError.Unwrap() should allow errors.Is to find inner error")
 	}
 }
 
 func TestNewError(t *testing.T) {
-	inner := errors.New("database connection failed")
-	err := NewError("DB_ERROR", "Database error", http.StatusInternalServerError, inner)
+	err := NewError("DB_ERROR", "Database error", http.StatusInternalServerError)
 
 	if err.Code != "DB_ERROR" {
 		t.Errorf("Code = %s, want DB_ERROR", err.Code)
@@ -106,156 +65,186 @@ func TestNewError(t *testing.T) {
 	if err.HTTPStatus != http.StatusInternalServerError {
 		t.Errorf("HTTPStatus = %d, want %d", err.HTTPStatus, http.StatusInternalServerError)
 	}
-	if err.Err != inner {
-		t.Error("Err should be the inner error")
+}
+
+func TestAppError_WithMethods(t *testing.T) {
+	err := NewError("TEST", "Test error", http.StatusBadRequest).
+		WithDetails("Additional details").
+		WithMetadata("key", "value").
+		WithRequestID("req-123")
+
+	if err.Details != "Additional details" {
+		t.Errorf("Details = %s, want 'Additional details'", err.Details)
+	}
+	if err.Metadata["key"] != "value" {
+		t.Errorf("Metadata[key] = %v, want 'value'", err.Metadata["key"])
+	}
+	if err.RequestID != "req-123" {
+		t.Errorf("RequestID = %s, want 'req-123'", err.RequestID)
 	}
 }
 
-func TestCommonErrors(t *testing.T) {
+func TestDomainError_Error(t *testing.T) {
 	tests := []struct {
-		name       string
-		err        error
-		wantMsg    string
+		name string
+		err  *DomainError
+		want string
 	}{
 		{
-			name:    "not found error",
-			err:     ErrNotFound,
-			wantMsg: "not found",
+			name: "error without wrapped error",
+			err: &DomainError{
+				Code:    ErrCodeNotFound,
+				Message: "Resource not found",
+			},
+			want: "[NOT_FOUND] Resource not found",
 		},
 		{
-			name:    "already exists error",
-			err:     ErrAlreadyExists,
-			wantMsg: "already exists",
-		},
-		{
-			name:    "invalid input error",
-			err:     ErrInvalidInput,
-			wantMsg: "invalid input",
-		},
-		{
-			name:    "unauthorized error",
-			err:     ErrUnauthorized,
-			wantMsg: "unauthorized",
-		},
-		{
-			name:    "forbidden error",
-			err:     ErrForbidden,
-			wantMsg: "forbidden",
+			name: "error with wrapped error",
+			err: &DomainError{
+				Code:    ErrCodeNotFound,
+				Message: "Resource not found",
+				Err:     errors.New("id: 123"),
+			},
+			want: "[NOT_FOUND] Resource not found: id: 123",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.err.Error() != tt.wantMsg {
-				t.Errorf("error message = %q, want %q", tt.err.Error(), tt.wantMsg)
+			if got := tt.err.Error(); got != tt.want {
+				t.Errorf("DomainError.Error() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestErrorHTTPStatusMapping(t *testing.T) {
+func TestNotFoundError(t *testing.T) {
+	err := NotFoundError("user", "123")
+
+	if err.Code != ErrCodeNotFound {
+		t.Errorf("Code = %s, want %s", err.Code, ErrCodeNotFound)
+	}
+	if err.Details["resource"] != "user" {
+		t.Errorf("Details[resource] = %v, want 'user'", err.Details["resource"])
+	}
+	if err.Details["id"] != "123" {
+		t.Errorf("Details[id] = %v, want '123'", err.Details["id"])
+	}
+}
+
+func TestAlreadyExistsError(t *testing.T) {
+	err := AlreadyExistsError("tenant", "slug", "my-tenant")
+
+	if err.Code != ErrCodeConflict {
+		t.Errorf("Code = %s, want %s", err.Code, ErrCodeConflict)
+	}
+	if err.Details["resource"] != "tenant" {
+		t.Errorf("Details[resource] = %v, want 'tenant'", err.Details["resource"])
+	}
+}
+
+func TestIsNotFoundError(t *testing.T) {
+	notFoundErr := NotFoundError("user", "123")
+	validationErr := ValidationError("name", "Name is required")
+
+	if !IsNotFoundError(notFoundErr) {
+		t.Error("IsNotFoundError should return true for NotFoundError")
+	}
+	if IsNotFoundError(validationErr) {
+		t.Error("IsNotFoundError should return false for ValidationError")
+	}
+	if IsNotFoundError(errors.New("random error")) {
+		t.Error("IsNotFoundError should return false for non-domain errors")
+	}
+}
+
+func TestIsAlreadyExistsError(t *testing.T) {
+	existsErr := AlreadyExistsError("tenant", "slug", "my-tenant")
+	notFoundErr := NotFoundError("user", "123")
+
+	if !IsAlreadyExistsError(existsErr) {
+		t.Error("IsAlreadyExistsError should return true for AlreadyExistsError")
+	}
+	if IsAlreadyExistsError(notFoundErr) {
+		t.Error("IsAlreadyExistsError should return false for NotFoundError")
+	}
+}
+
+func TestIsValidationError(t *testing.T) {
+	validationErr := ValidationError("email", "Invalid email format")
+	notFoundErr := NotFoundError("user", "123")
+
+	if !IsValidationError(validationErr) {
+		t.Error("IsValidationError should return true for ValidationError")
+	}
+	if IsValidationError(notFoundErr) {
+		t.Error("IsValidationError should return false for NotFoundError")
+	}
+}
+
+func TestSentinelErrors(t *testing.T) {
+	// Test that sentinel errors can be used with errors.Is
+	notFoundErr := NotFoundError("user", "123")
+
+	if !errors.Is(notFoundErr, ErrNotFoundVal) {
+		t.Error("NotFoundError should match ErrNotFoundVal with errors.Is")
+	}
+
+	existsErr := AlreadyExistsError("tenant", "slug", "test")
+	if !errors.Is(existsErr, ErrAlreadyExistsVal) {
+		t.Error("AlreadyExistsError should match ErrAlreadyExistsVal with errors.Is")
+	}
+}
+
+func TestGetHTTPStatus(t *testing.T) {
 	tests := []struct {
 		name       string
 		err        error
 		wantStatus int
 	}{
 		{
-			name:       "not found maps to 404",
-			err:        ErrNotFound,
+			name:       "not found error",
+			err:        ErrNotFound("user", "123"),
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:       "already exists maps to 409",
-			err:        ErrAlreadyExists,
-			wantStatus: http.StatusConflict,
-		},
-		{
-			name:       "invalid input maps to 400",
-			err:        ErrInvalidInput,
+			name:       "validation error",
+			err:        ErrValidation("Invalid input"),
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "unauthorized maps to 401",
-			err:        ErrUnauthorized,
+			name:       "unauthorized error",
+			err:        ErrUnauthorized(""),
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
-			name:       "forbidden maps to 403",
-			err:        ErrForbidden,
-			wantStatus: http.StatusForbidden,
-		},
-		{
-			name:       "internal error maps to 500",
-			err:        ErrInternal,
+			name:       "non-app error",
+			err:        errors.New("random error"),
 			wantStatus: http.StatusInternalServerError,
 		},
 	}
 
-	// Helper function to map errors to HTTP status
-	mapErrorToStatus := func(err error) int {
-		switch {
-		case errors.Is(err, ErrNotFound):
-			return http.StatusNotFound
-		case errors.Is(err, ErrAlreadyExists):
-			return http.StatusConflict
-		case errors.Is(err, ErrInvalidInput):
-			return http.StatusBadRequest
-		case errors.Is(err, ErrUnauthorized):
-			return http.StatusUnauthorized
-		case errors.Is(err, ErrForbidden):
-			return http.StatusForbidden
-		default:
-			return http.StatusInternalServerError
-		}
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mapErrorToStatus(tt.err)
+			got := GetHTTPStatus(tt.err)
 			if got != tt.wantStatus {
-				t.Errorf("HTTP status for %v = %d, want %d", tt.err, got, tt.wantStatus)
+				t.Errorf("GetHTTPStatus() = %d, want %d", got, tt.wantStatus)
 			}
 		})
 	}
 }
 
-func TestErrorWrapping(t *testing.T) {
-	// Test that wrapped errors can be detected
-	baseErr := ErrNotFound
-	wrappedErr := NewError("ENTITY_NOT_FOUND", "Entity not found", http.StatusNotFound, baseErr)
+func TestTimestamps_SetTimestamps(t *testing.T) {
+	var ts Timestamps
+	ts.SetTimestamps()
 
-	if !errors.Is(wrappedErr, baseErr) {
-		t.Error("wrapped error should match base error with errors.Is")
+	if ts.CreatedAt.IsZero() {
+		t.Error("CreatedAt should not be zero after SetTimestamps")
 	}
-
-	// Test error chain
-	var domainErr *Error
-	if !errors.As(wrappedErr, &domainErr) {
-		t.Error("should be able to extract domain error with errors.As")
+	if ts.UpdatedAt.IsZero() {
+		t.Error("UpdatedAt should not be zero after SetTimestamps")
 	}
-	if domainErr.Code != "ENTITY_NOT_FOUND" {
-		t.Errorf("extracted error code = %s, want ENTITY_NOT_FOUND", domainErr.Code)
-	}
-}
-
-func TestErrorJSON(t *testing.T) {
-	err := NewError("TEST_ERROR", "Test error message", http.StatusBadRequest, nil)
-
-	// Verify error can be used in JSON response
-	response := struct {
-		Success bool   `json:"success"`
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	}{
-		Success: false,
-		Code:    err.Code,
-		Message: err.Message,
-	}
-
-	if response.Code != "TEST_ERROR" {
-		t.Errorf("response code = %s, want TEST_ERROR", response.Code)
-	}
-	if response.Message != "Test error message" {
-		t.Errorf("response message = %s, want 'Test error message'", response.Message)
+	if ts.DeletedAt != nil {
+		t.Error("DeletedAt should be nil after SetTimestamps")
 	}
 }

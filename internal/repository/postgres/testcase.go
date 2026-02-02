@@ -93,12 +93,18 @@ func (r *testCaseRow) toDomain() (*domain.TestCase, error) {
 
 // Create inserts a new test case
 func (r *TestCaseRepository) Create(ctx context.Context, tc *domain.TestCase) error {
-	steps, err := json.Marshal(tc.Steps)
+	// Handle nil slices by defaulting to empty arrays for JSONB columns
+	steps := tc.Steps
+	if steps == nil {
+		steps = []domain.TestStep{}
+	}
+	stepsJSON, err := json.Marshal(steps)
 	if err != nil {
 		return err
 	}
 
-	var executionResult []byte
+	// executionResult can be null in the DB
+	var executionResult interface{} = nil
 	if tc.ExecutionResult != nil {
 		executionResult, err = json.Marshal(tc.ExecutionResult)
 		if err != nil {
@@ -106,7 +112,12 @@ func (r *TestCaseRepository) Create(ctx context.Context, tc *domain.TestCase) er
 		}
 	}
 
-	healingHistory, err := json.Marshal(tc.HealingHistory)
+	// healing_history defaults to empty array
+	healingHistory := tc.HealingHistory
+	if healingHistory == nil {
+		healingHistory = []domain.HealingRecord{}
+	}
+	healingHistoryJSON, err := json.Marshal(healingHistory)
 	if err != nil {
 		return err
 	}
@@ -134,11 +145,11 @@ func (r *TestCaseRepository) Create(ctx context.Context, tc *domain.TestCase) er
 		tc.Category,
 		string(tc.Priority),
 		string(tc.Status),
-		steps,
+		stepsJSON,
 		tc.Script,
 		originalScript,
 		executionResult,
-		healingHistory,
+		healingHistoryJSON,
 		tc.RetryCount,
 		tc.Duration.Milliseconds(),
 		tc.CreatedAt,
@@ -182,12 +193,18 @@ func (r *TestCaseRepository) CreateBatch(ctx context.Context, tcs []*domain.Test
 	defer stmt.Close()
 
 	for _, tc := range tcs {
-		steps, err := json.Marshal(tc.Steps)
+		// Handle nil slices by defaulting to empty arrays for JSONB columns
+		steps := tc.Steps
+		if steps == nil {
+			steps = []domain.TestStep{}
+		}
+		stepsJSON, err := json.Marshal(steps)
 		if err != nil {
 			return err
 		}
 
-		var executionResult []byte
+		// executionResult can be null in the DB
+		var executionResult interface{} = nil
 		if tc.ExecutionResult != nil {
 			executionResult, err = json.Marshal(tc.ExecutionResult)
 			if err != nil {
@@ -195,7 +212,12 @@ func (r *TestCaseRepository) CreateBatch(ctx context.Context, tcs []*domain.Test
 			}
 		}
 
-		healingHistory, err := json.Marshal(tc.HealingHistory)
+		// healing_history defaults to empty array
+		healingHistory := tc.HealingHistory
+		if healingHistory == nil {
+			healingHistory = []domain.HealingRecord{}
+		}
+		healingHistoryJSON, err := json.Marshal(healingHistory)
 		if err != nil {
 			return err
 		}
@@ -214,11 +236,11 @@ func (r *TestCaseRepository) CreateBatch(ctx context.Context, tcs []*domain.Test
 			tc.Category,
 			string(tc.Priority),
 			string(tc.Status),
-			steps,
+			stepsJSON,
 			tc.Script,
 			originalScript,
 			executionResult,
-			healingHistory,
+			healingHistoryJSON,
 			tc.RetryCount,
 			tc.Duration.Milliseconds(),
 			tc.CreatedAt,
@@ -283,12 +305,18 @@ func (r *TestCaseRepository) GetByTestRunID(ctx context.Context, testRunID uuid.
 
 // Update updates an existing test case
 func (r *TestCaseRepository) Update(ctx context.Context, tc *domain.TestCase) error {
-	steps, err := json.Marshal(tc.Steps)
+	// Handle nil slices by defaulting to empty arrays for JSONB columns
+	steps := tc.Steps
+	if steps == nil {
+		steps = []domain.TestStep{}
+	}
+	stepsJSON, err := json.Marshal(steps)
 	if err != nil {
 		return err
 	}
 
-	var executionResult []byte
+	// executionResult can be null in the DB
+	var executionResult interface{} = nil
 	if tc.ExecutionResult != nil {
 		executionResult, err = json.Marshal(tc.ExecutionResult)
 		if err != nil {
@@ -296,7 +324,12 @@ func (r *TestCaseRepository) Update(ctx context.Context, tc *domain.TestCase) er
 		}
 	}
 
-	healingHistory, err := json.Marshal(tc.HealingHistory)
+	// healing_history defaults to empty array
+	healingHistory := tc.HealingHistory
+	if healingHistory == nil {
+		healingHistory = []domain.HealingRecord{}
+	}
+	healingHistoryJSON, err := json.Marshal(healingHistory)
 	if err != nil {
 		return err
 	}
@@ -320,10 +353,10 @@ func (r *TestCaseRepository) Update(ctx context.Context, tc *domain.TestCase) er
 		tc.Script,
 		originalScript,
 		executionResult,
-		healingHistory,
+		healingHistoryJSON,
 		tc.RetryCount,
 		tc.Duration.Milliseconds(),
-		steps,
+		stepsJSON,
 		time.Now().UTC(),
 	)
 	if err != nil {

@@ -366,6 +366,21 @@ func IsSentinelError(err error, sentinel *DomainError) bool {
 	return false
 }
 
+// IsNotFoundError checks if the error is a not found error
+func IsNotFoundError(err error) bool {
+	return IsSentinelError(err, ErrNotFoundVal)
+}
+
+// IsAlreadyExistsError checks if the error is an already exists error
+func IsAlreadyExistsError(err error) bool {
+	return IsSentinelError(err, ErrAlreadyExistsVal)
+}
+
+// IsValidationError checks if the error is a validation error
+func IsValidationError(err error) bool {
+	return IsSentinelError(err, ErrInvalidInputVal)
+}
+
 // NotFoundError creates a not found domain error
 func NotFoundError(resource string, id any) *DomainError {
 	return &DomainError{
