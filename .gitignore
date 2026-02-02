@@ -74,3 +74,15 @@ wheels/
 .venv/
 venv/
 ENV/
+
+# Node.js
+node_modules/
+
+# Test artifacts
+test-results/
+playwright-report/
+*.pdf
+
+# Demo output and binaries
+demo/
+demo
