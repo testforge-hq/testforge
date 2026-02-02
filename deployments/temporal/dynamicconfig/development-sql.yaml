@@ -1,0 +1,44 @@
+# Temporal dynamic config for development
+# See: https://docs.temporal.io/references/dynamic-configuration
+
+# Limit concurrent task queue pollers
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+
+# History settings
+history.persistenceMaxQPS:
+  - value: 3000
+    constraints: {}
+
+history.persistenceGlobalMaxQPS:
+  - value: 0
+    constraints: {}
+
+# Matching settings (task queue)
+matching.numTaskqueueReadPartitions:
+  - value: 5
+    constraints: {}
+
+matching.numTaskqueueWritePartitions:
+  - value: 5
+    constraints: {}
+
+# Frontend settings
+frontend.enableClientVersionCheck:
+  - value: true
+    constraints: {}
+
+# Worker settings
+worker.enableScheduler:
+  - value: true
+    constraints: {}
+
+# System settings
+system.enableActivityEagerExecution:
+  - value: true
+    constraints: {}
+
+system.enableEagerWorkflowStart:
+  - value: true
+    constraints: {}

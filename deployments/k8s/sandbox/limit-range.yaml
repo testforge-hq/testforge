@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: sandbox-limits
+  namespace: testforge-sandboxes
+spec:
+  limits:
+    # Default limits for containers
+    - default:
+        cpu: "1"
+        memory: "2Gi"
+      defaultRequest:
+        cpu: "500m"
+        memory: "1Gi"
+      max:
+        cpu: "4"
+        memory: "8Gi"
+      min:
+        cpu: "100m"
+        memory: "256Mi"
+      type: Container
+    # Pod-level limits
+    - max:
+        cpu: "8"
+        memory: "16Gi"
+      type: Pod

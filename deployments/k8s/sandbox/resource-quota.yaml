@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-quota-free
+  namespace: testforge-sandboxes
+spec:
+  hard:
+    # Limit total resources for free tier sandboxes
+    requests.cpu: "10"
+    requests.memory: "20Gi"
+    limits.cpu: "20"
+    limits.memory: "40Gi"
+    pods: "20"
+    count/jobs.batch: "10"
+  scopeSelector:
+    matchExpressions:
+      - scopeName: PriorityClass
+        operator: In
+        values:
+          - sandbox-free
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-quota-pro
+  namespace: testforge-sandboxes
+spec:
+  hard:
+    # More resources for pro tier
+    requests.cpu: "50"
+    requests.memory: "100Gi"
+    limits.cpu: "100"
+    limits.memory: "200Gi"
+    pods: "100"
+    count/jobs.batch: "50"
+  scopeSelector:
+    matchExpressions:
+      - scopeName: PriorityClass
+        operator: In
+        values:
+          - sandbox-pro
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sandbox-quota-enterprise
+  namespace: testforge-sandboxes
+spec:
+  hard:
+    # High resources for enterprise tier
+    requests.cpu: "200"
+    requests.memory: "400Gi"
+    limits.cpu: "400"
+    limits.memory: "800Gi"
+    pods: "500"
+    count/jobs.batch: "200"
+  scopeSelector:
+    matchExpressions:
+      - scopeName: PriorityClass
+        operator: In
+        values:
+          - sandbox-enterprise
+---
+# Priority classes for tier-based scheduling
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: sandbox-free
+value: 100
+globalDefault: false
+description: "Priority class for free tier sandbox pods"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: sandbox-pro
+value: 500
+globalDefault: false
+description: "Priority class for pro tier sandbox pods"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: sandbox-enterprise
+value: 1000
+globalDefault: false
+description: "Priority class for enterprise tier sandbox pods"

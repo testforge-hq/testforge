@@ -1,0 +1,95 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-network-policy
+  namespace: testforge-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      app: testforge-sandbox
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []  # No ingress allowed - sandboxes are isolated
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow egress to MinIO for artifact storage
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: testforge
+        - podSelector:
+            matchLabels:
+              app: minio
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Allow egress to target URLs (HTTP/HTTPS only)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Block internal cluster IPs
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+---
+# Network policy for enterprise tier - allows more egress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-enterprise-policy
+  namespace: testforge-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      app: testforge-sandbox
+      tier: enterprise
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow MinIO
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: testforge
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Allow all external traffic (enterprise can access internal services)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 3000
