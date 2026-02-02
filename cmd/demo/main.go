@@ -411,8 +411,9 @@ func printExecutiveSummary(report *reporting.TestRunReport) {
 //==========================================================================
 
 func runDiscovery(ctx context.Context, url string, maxPages int, outputDir string, logger *zap.Logger) (*discovery.AppModel, error) {
-	bar := progressbar.NewOptions(100,
-		progressbar.OptionSetDescription("   Crawling..."),
+	// Create progress bar with max pages as the target
+	bar := progressbar.NewOptions(maxPages,
+		progressbar.OptionSetDescription("   Discovering pages..."),
 		progressbar.OptionShowCount(),
 		progressbar.OptionSetWidth(40),
 		progressbar.OptionSetTheme(progressbar.Theme{
@@ -422,12 +423,15 @@ func runDiscovery(ctx context.Context, url string, maxPages int, outputDir strin
 			BarStart:      "[",
 			BarEnd:        "]",
 		}),
+		progressbar.OptionSetPredictTime(false),
+		progressbar.OptionShowElapsedTimeOnFinish(),
 	)
 
 	cfg := discovery.DefaultConfig()
 	cfg.MaxPages = maxPages
 	cfg.MaxDepth = 3
 	cfg.Timeout = 30 * time.Second
+	cfg.MaxDuration = 3 * time.Minute // Reasonable timeout for demo
 	cfg.Headless = true
 	cfg.ScreenshotDir = filepath.Join(outputDir, "screenshots")
 
@@ -441,23 +445,16 @@ func runDiscovery(ctx context.Context, url string, maxPages int, outputDir strin
 	}
 	defer crawler.Close()
 
-	// Progress updates
-	done := make(chan bool)
-	go func() {
-		for i := 0; i < 100; i++ {
-			select {
-			case <-done:
-				bar.Set(100)
-				return
-			default:
-				time.Sleep(300 * time.Millisecond)
-				bar.Add(1)
-			}
-		}
-	}()
+	// Set up real progress callback from crawler
+	crawler.SetProgressCallback(func(current, total int) {
+		bar.Set(current)
+	})
 
-	result, err := crawler.Crawl(ctx, url)
-	close(done)
+	// Create a context with timeout for the crawl
+	crawlCtx, cancel := context.WithTimeout(ctx, cfg.MaxDuration)
+	defer cancel()
+
+	result, err := crawler.Crawl(crawlCtx, url)
 	bar.Finish()
 
 	return result, err
