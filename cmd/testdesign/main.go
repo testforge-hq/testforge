@@ -100,7 +100,7 @@ func main() {
 	}
 
 	// Print results
-	fmt.Println("\n=== TEST SUITE GENERATION COMPLETE ===\n")
+	fmt.Println("\n=== TEST SUITE GENERATION COMPLETE ===")
 
 	fmt.Printf("Suite: %s\n", result.Suite.Name)
 	fmt.Printf("Version: %s\n", result.Suite.Version)

@@ -3,6 +3,8 @@ package llm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,14 +23,15 @@ type ClaudeClient struct {
 	apiKey     string
 	baseURL    string
 	model      string
+	maxTokens  int
 	httpClient *http.Client
 
 	// Rate limiting
 	rateLimiter *rate.Limiter
 
-	// Caching
-	cache     *Cache
-	cacheTTL  time.Duration
+	// Caching with LRU eviction
+	cache    *LRUCache
+	cacheTTL time.Duration
 
 	// Metrics
 	metrics *Metrics
@@ -37,13 +40,15 @@ type ClaudeClient struct {
 
 // Config for Claude client
 type Config struct {
-	APIKey          string
-	BaseURL         string
-	Model           string
-	Timeout         time.Duration
-	RateLimitRPM    int           // Requests per minute
-	CacheTTL        time.Duration
-	MaxRetries      int
+	APIKey       string
+	BaseURL      string
+	Model        string
+	MaxTokens    int
+	Timeout      time.Duration
+	RateLimitRPM int           // Requests per minute
+	CacheTTL     time.Duration
+	CacheSize    int           // Max cache entries
+	MaxRetries   int
 }
 
 // DefaultConfig returns default configuration
@@ -51,9 +56,11 @@ func DefaultConfig() Config {
 	return Config{
 		BaseURL:      "https://api.anthropic.com",
 		Model:        "claude-sonnet-4-20250514",
+		MaxTokens:    8192,
 		Timeout:      120 * time.Second,
 		RateLimitRPM: 50,
 		CacheTTL:     24 * time.Hour,
+		CacheSize:    1000,
 		MaxRetries:   3,
 	}
 }
@@ -71,45 +78,109 @@ type Metrics struct {
 	CacheMisses     int64
 }
 
-// Cache for LLM responses
-type Cache struct {
-	data map[string]cacheEntry
-	mu   sync.RWMutex
+// LRUCache implements a thread-safe LRU cache with TTL
+type LRUCache struct {
+	maxSize int
+	ttl     time.Duration
+	data    map[string]*cacheEntry
+	order   []string // LRU order (oldest first)
+	mu      sync.RWMutex
 }
 
 type cacheEntry struct {
 	response  []byte
 	expiresAt time.Time
+	key       string
 }
 
-// NewCache creates a new cache
-func NewCache() *Cache {
-	return &Cache{
-		data: make(map[string]cacheEntry),
+// NewLRUCache creates a new LRU cache
+func NewLRUCache(maxSize int, ttl time.Duration) *LRUCache {
+	return &LRUCache{
+		maxSize: maxSize,
+		ttl:     ttl,
+		data:    make(map[string]*cacheEntry),
+		order:   make([]string, 0, maxSize),
 	}
 }
 
 // Get retrieves from cache
-func (c *Cache) Get(key string) ([]byte, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	entry, ok := c.data[key]
-	if !ok || time.Now().After(entry.expiresAt) {
-		return nil, false
-	}
-	return entry.response, true
-}
-
-// Set stores in cache
-func (c *Cache) Set(key string, value []byte, ttl time.Duration) {
+func (c *LRUCache) Get(key string) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.data[key] = cacheEntry{
-		response:  value,
-		expiresAt: time.Now().Add(ttl),
+	entry, ok := c.data[key]
+	if !ok {
+		return nil, false
 	}
+
+	// Check TTL
+	if time.Now().After(entry.expiresAt) {
+		c.removeEntry(key)
+		return nil, false
+	}
+
+	// Move to end (most recently used)
+	c.moveToEnd(key)
+
+	return entry.response, true
+}
+
+// Set stores in cache with LRU eviction
+func (c *LRUCache) Set(key string, value []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// If key exists, update and move to end
+	if _, exists := c.data[key]; exists {
+		c.data[key] = &cacheEntry{
+			response:  value,
+			expiresAt: time.Now().Add(c.ttl),
+			key:       key,
+		}
+		c.moveToEnd(key)
+		return
+	}
+
+	// Evict oldest if at capacity
+	for len(c.data) >= c.maxSize && len(c.order) > 0 {
+		oldest := c.order[0]
+		c.removeEntry(oldest)
+	}
+
+	// Add new entry
+	c.data[key] = &cacheEntry{
+		response:  value,
+		expiresAt: time.Now().Add(c.ttl),
+		key:       key,
+	}
+	c.order = append(c.order, key)
+}
+
+func (c *LRUCache) removeEntry(key string) {
+	delete(c.data, key)
+	for i, k := range c.order {
+		if k == key {
+			c.order = append(c.order[:i], c.order[i+1:]...)
+			break
+		}
+	}
+}
+
+func (c *LRUCache) moveToEnd(key string) {
+	for i, k := range c.order {
+		if k == key {
+			c.order = append(c.order[:i], c.order[i+1:]...)
+			c.order = append(c.order, key)
+			break
+		}
+	}
+}
+
+// Size returns current cache size
+func (c *LRUCache) Size() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.data)
 }
 
 // NewClaudeClient creates a new Claude API client
@@ -119,34 +190,41 @@ func NewClaudeClient(cfg Config) (*ClaudeClient, error) {
 	}
 
 	// Merge with defaults
+	defaults := DefaultConfig()
 	if cfg.BaseURL == "" {
-		cfg.BaseURL = DefaultConfig().BaseURL
+		cfg.BaseURL = defaults.BaseURL
 	}
 	if cfg.Model == "" {
-		cfg.Model = DefaultConfig().Model
+		cfg.Model = defaults.Model
+	}
+	if cfg.MaxTokens == 0 {
+		cfg.MaxTokens = defaults.MaxTokens
 	}
 	if cfg.Timeout == 0 {
-		cfg.Timeout = DefaultConfig().Timeout
+		cfg.Timeout = defaults.Timeout
 	}
 	if cfg.RateLimitRPM == 0 {
-		cfg.RateLimitRPM = DefaultConfig().RateLimitRPM
+		cfg.RateLimitRPM = defaults.RateLimitRPM
 	}
 	if cfg.CacheTTL == 0 {
-		cfg.CacheTTL = DefaultConfig().CacheTTL
+		cfg.CacheTTL = defaults.CacheTTL
+	}
+	if cfg.CacheSize == 0 {
+		cfg.CacheSize = defaults.CacheSize
 	}
 
-	// Create rate limiter (tokens per second = RPM / 60)
-	limiter := rate.NewLimiter(rate.Limit(float64(cfg.RateLimitRPM)/60.0), 1)
+	// Create rate limiter with burst capacity
+	// RPM/60 = requests per second, burst of 5 for handling spikes
+	limiter := rate.NewLimiter(rate.Limit(float64(cfg.RateLimitRPM)/60.0), 5)
 
 	return &ClaudeClient{
-		apiKey:  cfg.APIKey,
-		baseURL: cfg.BaseURL,
-		model:   cfg.Model,
-		httpClient: &http.Client{
-			Timeout: cfg.Timeout,
-		},
+		apiKey:      cfg.APIKey,
+		baseURL:     cfg.BaseURL,
+		model:       cfg.Model,
+		maxTokens:   cfg.MaxTokens,
+		httpClient:  &http.Client{Timeout: cfg.Timeout},
 		rateLimiter: limiter,
-		cache:       NewCache(),
+		cache:       NewLRUCache(cfg.CacheSize, cfg.CacheTTL),
 		cacheTTL:    cfg.CacheTTL,
 		metrics:     &Metrics{},
 	}, nil
@@ -193,17 +271,24 @@ type Usage struct {
 
 // Complete sends a completion request to Claude
 func (c *ClaudeClient) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, *Usage, error) {
+	return c.CompleteWithOptions(ctx, systemPrompt, userPrompt, 0.3, true)
+}
+
+// CompleteWithOptions sends a completion request with custom options
+func (c *ClaudeClient) CompleteWithOptions(ctx context.Context, systemPrompt, userPrompt string, temperature float64, useCache bool) (string, *Usage, error) {
 	atomic.AddInt64(&c.metrics.TotalRequests, 1)
 
 	// Check cache
 	cacheKey := c.cacheKey(systemPrompt, userPrompt)
-	if cached, ok := c.cache.Get(cacheKey); ok {
-		atomic.AddInt64(&c.metrics.CacheHits, 1)
-		return string(cached), nil, nil
+	if useCache {
+		if cached, ok := c.cache.Get(cacheKey); ok {
+			atomic.AddInt64(&c.metrics.CacheHits, 1)
+			return string(cached), nil, nil
+		}
 	}
 	atomic.AddInt64(&c.metrics.CacheMisses, 1)
 
-	// Rate limiting
+	// Rate limiting with context
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		atomic.AddInt64(&c.metrics.FailedRequests, 1)
 		return "", nil, fmt.Errorf("rate limit: %w", err)
@@ -214,15 +299,15 @@ func (c *ClaudeClient) Complete(ctx context.Context, systemPrompt, userPrompt st
 	// Build request
 	req := Request{
 		Model:     c.model,
-		MaxTokens: 8192,
+		MaxTokens: c.maxTokens,
 		System:    systemPrompt,
 		Messages: []Message{
 			{Role: "user", Content: userPrompt},
 		},
-		Temperature: 0.3, // Lower temperature for more deterministic output
+		Temperature: temperature,
 	}
 
-	// Make request
+	// Make request with context
 	resp, err := c.doRequest(ctx, req)
 	if err != nil {
 		atomic.AddInt64(&c.metrics.FailedRequests, 1)
@@ -241,13 +326,15 @@ func (c *ClaudeClient) Complete(ctx context.Context, systemPrompt, userPrompt st
 
 	// Extract text
 	if len(resp.Content) == 0 {
-		return "", &resp.Usage, fmt.Errorf("empty response")
+		return "", &resp.Usage, fmt.Errorf("empty response from Claude")
 	}
 
 	text := resp.Content[0].Text
 
 	// Cache response
-	c.cache.Set(cacheKey, []byte(text), c.cacheTTL)
+	if useCache {
+		c.cache.Set(cacheKey, []byte(text))
+	}
 
 	return text, &resp.Usage, nil
 }
@@ -255,16 +342,25 @@ func (c *ClaudeClient) Complete(ctx context.Context, systemPrompt, userPrompt st
 // CompleteJSON sends a completion request and parses JSON response
 func (c *ClaudeClient) CompleteJSON(ctx context.Context, systemPrompt, userPrompt string, result interface{}) (*Usage, error) {
 	// Add JSON instruction to system prompt
-	jsonSystemPrompt := systemPrompt + "\n\nIMPORTANT: Return ONLY valid JSON. No markdown, no code blocks, no explanations."
+	jsonSystemPrompt := systemPrompt + "\n\nIMPORTANT: Return ONLY valid JSON. No markdown, no code blocks, no explanations outside the JSON."
 
 	var lastErr error
 	var totalUsage Usage
 
 	for attempt := 0; attempt < 3; attempt++ {
-		text, usage, err := c.Complete(ctx, jsonSystemPrompt, userPrompt)
+		// Check context before each attempt
+		if ctx.Err() != nil {
+			return &totalUsage, ctx.Err()
+		}
+
+		text, usage, err := c.CompleteWithOptions(ctx, jsonSystemPrompt, userPrompt, 0.2, attempt == 0) // Only cache first attempt
 		if err != nil {
 			lastErr = err
-			time.Sleep(time.Duration(attempt+1) * time.Second)
+			select {
+			case <-ctx.Done():
+				return &totalUsage, ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * time.Second):
+			}
 			continue
 		}
 
@@ -276,13 +372,13 @@ func (c *ClaudeClient) CompleteJSON(ctx context.Context, systemPrompt, userPromp
 		// Extract JSON from response
 		jsonStr := extractJSON(text)
 		if jsonStr == "" {
-			lastErr = fmt.Errorf("no JSON found in response")
+			lastErr = fmt.Errorf("no JSON found in response: %s", truncateString(text, 200))
 			continue
 		}
 
 		// Parse JSON
 		if err := json.Unmarshal([]byte(jsonStr), result); err != nil {
-			lastErr = fmt.Errorf("invalid JSON: %w", err)
+			lastErr = fmt.Errorf("invalid JSON: %w (response: %s)", err, truncateString(jsonStr, 200))
 			continue
 		}
 
@@ -292,7 +388,7 @@ func (c *ClaudeClient) CompleteJSON(ctx context.Context, systemPrompt, userPromp
 	return &totalUsage, fmt.Errorf("failed after 3 attempts: %w", lastErr)
 }
 
-// doRequest performs the HTTP request
+// doRequest performs the HTTP request with proper context handling
 func (c *ClaudeClient) doRequest(ctx context.Context, req Request) (*Response, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -310,6 +406,10 @@ func (c *ClaudeClient) doRequest(ctx context.Context, req Request) (*Response, e
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		// Check if context was cancelled
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -320,7 +420,7 @@ func (c *ClaudeClient) doRequest(ctx context.Context, req Request) (*Response, e
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, truncateString(string(respBody), 500))
 	}
 
 	var apiResp Response
@@ -340,17 +440,14 @@ func (c *ClaudeClient) calculateCost(usage Usage) float64 {
 	return inputCost + outputCost
 }
 
-// cacheKey generates a cache key from prompts
+// cacheKey generates a proper cache key using SHA256 hash
 func (c *ClaudeClient) cacheKey(systemPrompt, userPrompt string) string {
-	// Simple hash - in production use a proper hash function
-	combined := systemPrompt + "|" + userPrompt
-	if len(combined) > 100 {
-		combined = combined[:100]
-	}
-	return fmt.Sprintf("%s_%d", c.model, len(combined))
+	combined := systemPrompt + "\x00" + userPrompt // Use null byte as separator
+	hash := sha256.Sum256([]byte(combined))
+	return c.model + "_" + hex.EncodeToString(hash[:16]) // 16 bytes = 32 hex chars
 }
 
-// GetMetrics returns current metrics
+// GetMetrics returns current metrics (thread-safe copy)
 func (c *ClaudeClient) GetMetrics() Metrics {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -371,6 +468,11 @@ func (c *ClaudeClient) GetMetrics() Metrics {
 // GetModel returns the model being used
 func (c *ClaudeClient) GetModel() string {
 	return c.model
+}
+
+// GetCacheSize returns current cache size
+func (c *ClaudeClient) GetCacheSize() int {
+	return c.cache.Size()
 }
 
 // extractJSON extracts JSON from a string that might contain markdown or other text
@@ -449,4 +551,12 @@ func extractJSON(text string) string {
 	}
 
 	return ""
+}
+
+// truncateString truncates a string to maxLen with ellipsis
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }

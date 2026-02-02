@@ -72,6 +72,23 @@ func NewTestArchitect(client *llm.ClaudeClient, config ArchitectConfig) *TestArc
 	}
 }
 
+// validateInput validates the design input before processing
+func (a *TestArchitect) validateInput(input DesignInput) error {
+	if input.AppModel == nil {
+		return fmt.Errorf("AppModel is required")
+	}
+	if input.AppModel.Pages == nil || len(input.AppModel.Pages) == 0 {
+		return fmt.Errorf("AppModel must contain at least one page")
+	}
+	if input.BaseURL == "" {
+		return fmt.Errorf("BaseURL is required")
+	}
+	if input.ProjectID == "" {
+		return fmt.Errorf("ProjectID is required")
+	}
+	return nil
+}
+
 // DesignInput contains input for test suite design
 type DesignInput struct {
 	AppModel    *discovery.AppModel
@@ -96,6 +113,11 @@ type DesignOutput struct {
 
 // DesignTestSuite generates a comprehensive test suite from the app model
 func (a *TestArchitect) DesignTestSuite(ctx context.Context, input DesignInput) (*DesignOutput, error) {
+	// Validate input
+	if err := a.validateInput(input); err != nil {
+		return nil, fmt.Errorf("invalid input: %w", err)
+	}
+
 	startTime := time.Now()
 
 	// Initialize the test suite

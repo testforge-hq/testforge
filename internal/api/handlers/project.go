@@ -301,7 +301,7 @@ func (h *ProjectHandler) getTenantID(r *http.Request) (uuid.UUID, error) {
 		return id, nil
 	}
 
-	return uuid.Nil, domain.ErrUnauthorized
+	return uuid.Nil, domain.ErrUnauthorized("tenant ID not found")
 }
 
 // validateCreateRequest validates the create project request

@@ -80,46 +80,36 @@ func ErrorFromDomain(w http.ResponseWriter, err error) {
 	var domainErr *domain.DomainError
 
 	if errors.As(err, &domainErr) {
-		status := domainErrorToStatus(domainErr.Err)
+		status := domainErrorToStatus(domainErr)
 		JSONError(w, status, domainErr.Code, domainErr.Message, domainErr.Details)
 		return
 	}
 
-	// Check sentinel errors
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		JSONError(w, http.StatusNotFound, "NOT_FOUND", "Resource not found", nil)
-	case errors.Is(err, domain.ErrAlreadyExists):
-		JSONError(w, http.StatusConflict, "ALREADY_EXISTS", "Resource already exists", nil)
-	case errors.Is(err, domain.ErrInvalidInput):
-		JSONError(w, http.StatusBadRequest, "INVALID_INPUT", "Invalid input", nil)
-	case errors.Is(err, domain.ErrUnauthorized):
-		JSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized", nil)
-	case errors.Is(err, domain.ErrForbidden):
-		JSONError(w, http.StatusForbidden, "FORBIDDEN", "Forbidden", nil)
-	case errors.Is(err, domain.ErrQuotaExceeded):
-		JSONError(w, http.StatusTooManyRequests, "QUOTA_EXCEEDED", "Quota exceeded", nil)
-	default:
-		JSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error", nil)
+	// Check AppError
+	var appErr *domain.AppError
+	if errors.As(err, &appErr) {
+		JSONError(w, appErr.HTTPStatus, appErr.Code, appErr.Message, nil)
+		return
 	}
+
+	// Default to internal error
+	JSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error", nil)
 }
 
-func domainErrorToStatus(err error) int {
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
+func domainErrorToStatus(err *domain.DomainError) int {
+	switch err.Code {
+	case domain.ErrCodeNotFound:
 		return http.StatusNotFound
-	case errors.Is(err, domain.ErrAlreadyExists):
+	case domain.ErrCodeConflict:
 		return http.StatusConflict
-	case errors.Is(err, domain.ErrInvalidInput):
+	case domain.ErrCodeValidation, domain.ErrCodeBadRequest:
 		return http.StatusBadRequest
-	case errors.Is(err, domain.ErrUnauthorized):
+	case domain.ErrCodeUnauthorized:
 		return http.StatusUnauthorized
-	case errors.Is(err, domain.ErrForbidden):
+	case domain.ErrCodeForbidden:
 		return http.StatusForbidden
-	case errors.Is(err, domain.ErrQuotaExceeded):
+	case domain.ErrCodeQuotaExceeded, domain.ErrCodeRateLimited:
 		return http.StatusTooManyRequests
-	case errors.Is(err, domain.ErrConflict):
-		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}

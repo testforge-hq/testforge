@@ -320,7 +320,7 @@ func main() {
 }
 
 func printBanner() {
-	cyan.Println(`
+	cyan.Print(`
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
 ║   ████████╗███████╗███████╗████████╗███████╗ ██████╗ ██████╗  ██████╗ ███████╗║
@@ -566,13 +566,36 @@ func runTestExecution(ctx context.Context, scriptsDir string, logger *zap.Logger
 	// Run tests
 	testCmd := exec.CommandContext(ctx, "npx", "playwright", "test", "--reporter=json")
 	testCmd.Dir = scriptsDir
-	output, _ := testCmd.CombinedOutput()
+	output, testErr := testCmd.CombinedOutput()
 
 	close(done)
 	bar.Finish()
 
 	result := parsePlaywrightResults(output)
 	result.Duration = time.Since(startTime).Seconds()
+
+	// Return error if test execution failed (not just test failures)
+	if testErr != nil {
+		// Check if it's a context cancellation
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		// Check if Playwright is installed
+		if strings.Contains(string(output), "command not found") ||
+			strings.Contains(string(output), "not recognized") {
+			return result, fmt.Errorf("playwright not installed: %w", testErr)
+		}
+		// Check for npm/node issues
+		if strings.Contains(string(output), "npm ERR!") ||
+			strings.Contains(string(output), "Cannot find module") {
+			return result, fmt.Errorf("npm/dependency error: %s", truncateOutput(string(output), 500))
+		}
+		// Non-zero exit code from tests is expected when tests fail
+		// Only return error if we couldn't parse any results
+		if result.Total == 0 {
+			return result, fmt.Errorf("test execution failed: %s", truncateOutput(string(output), 500))
+		}
+	}
 
 	return result, nil
 }
@@ -1058,6 +1081,14 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
+}
+
+func truncateOutput(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	// For command output, show last part (usually has the error)
+	return "..." + s[len(s)-max+3:]
 }
 
 func wrapText(text string, width int) []string {

@@ -253,6 +253,16 @@ func (c *Crawler) CrawlWithAuth(ctx context.Context, startURL string, authConfig
 func (c *Crawler) worker(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	// Panic recovery to prevent worker crashes from bringing down the crawler
+	defer func() {
+		if r := recover(); r != nil {
+			// Log panic but don't crash - other workers can continue
+			if c.onHeartbeat != nil {
+				c.onHeartbeat(fmt.Sprintf("Worker recovered from panic: %v", r))
+			}
+		}
+	}()
+
 	// Create browser context for this worker
 	browserCtx, err := c.browser.NewContext(playwright.BrowserNewContextOptions{
 		Viewport: &playwright.Size{

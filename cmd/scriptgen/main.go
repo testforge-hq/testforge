@@ -118,7 +118,7 @@ func main() {
 	}
 
 	// Print summary
-	fmt.Println("\n=== SCRIPT GENERATION COMPLETE ===\n")
+	fmt.Println("\n=== SCRIPT GENERATION COMPLETE ===")
 	fmt.Printf("📁 Output Directory: %s\n", *outputDir)
 	fmt.Printf("📄 Files Generated: %d\n", filesWritten)
 	fmt.Printf("🧪 Test Cases: %d\n", project.TestCount)
