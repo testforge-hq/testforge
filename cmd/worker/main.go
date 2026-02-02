@@ -103,7 +103,18 @@ func main() {
 		logger.Warn("Failed to create healing activity, healing will be disabled", zap.Error(err))
 	}
 
-	reportingActivity := reporting.NewActivity()
+	// Create reporting activity with Claude configuration
+	reportingCfg := reporting.Config{
+		ClaudeAPIKey: cfg.Claude.APIKey,
+		ClaudeModel:  cfg.Claude.Model,
+		BaseURL:      fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port),
+		OutputDir:    "/tmp/testforge/reports",
+	}
+
+	reportingActivity, err := reporting.NewActivity(reportingCfg, nil, logger)
+	if err != nil {
+		logger.Warn("Failed to create reporting activity, reporting will be limited", zap.Error(err))
+	}
 
 	w.RegisterActivityWithOptions(discoveryActivity.Execute, activity.RegisterOptions{
 		Name: workflows.DiscoveryActivityName,
@@ -122,9 +133,11 @@ func main() {
 			Name: workflows.HealingActivityName,
 		})
 	}
-	w.RegisterActivityWithOptions(reportingActivity.Execute, activity.RegisterOptions{
-		Name: workflows.ReportActivityName,
-	})
+	if reportingActivity != nil {
+		w.RegisterActivityWithOptions(reportingActivity.Execute, activity.RegisterOptions{
+			Name: workflows.ReportActivityName,
+		})
+	}
 
 	logger.Info("Registered workflows and activities",
 		zap.Int("activity_count", 6),
