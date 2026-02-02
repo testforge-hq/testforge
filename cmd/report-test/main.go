@@ -11,12 +11,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 
 	"github.com/testforge/testforge/internal/services/reporting"
 )
 
 func main() {
+	// Auto-load .env file if present
+	godotenv.Load()
+
 	// Parse flags
 	apiKey := flag.String("api-key", os.Getenv("ANTHROPIC_API_KEY"), "Claude API key")
 	model := flag.String("model", "claude-sonnet-4-20250514", "Claude model to use")
