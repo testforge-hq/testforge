@@ -484,3 +484,184 @@ func TestErrServiceUnavailable(t *testing.T) {
 		t.Error("Should be retryable")
 	}
 }
+
+func TestErrDiscoveryFailed(t *testing.T) {
+	cause := errors.New("crawler timeout")
+	err := ErrDiscoveryFailed("page not accessible", cause)
+
+	if err.Code != ErrCodeDiscoveryFailed {
+		t.Errorf("Code = %s, want %s", err.Code, ErrCodeDiscoveryFailed)
+	}
+	if err.HTTPStatus != http.StatusUnprocessableEntity {
+		t.Errorf("HTTPStatus = %d, want %d", err.HTTPStatus, http.StatusUnprocessableEntity)
+	}
+	if !errors.Is(err, cause) {
+		t.Error("Should wrap the cause error")
+	}
+}
+
+func TestErrTestDesignFailed(t *testing.T) {
+	cause := errors.New("AI generation error")
+	err := ErrTestDesignFailed("could not generate tests", cause)
+
+	if err.Code != ErrCodeTestDesignFailed {
+		t.Errorf("Code = %s, want %s", err.Code, ErrCodeTestDesignFailed)
+	}
+	if err.HTTPStatus != http.StatusUnprocessableEntity {
+		t.Errorf("HTTPStatus = %d, want %d", err.HTTPStatus, http.StatusUnprocessableEntity)
+	}
+	if !errors.Is(err, cause) {
+		t.Error("Should wrap the cause error")
+	}
+}
+
+func TestErrExecutionFailed(t *testing.T) {
+	cause := errors.New("browser crashed")
+	err := ErrExecutionFailed("test run aborted", cause)
+
+	if err.Code != ErrCodeExecutionFailed {
+		t.Errorf("Code = %s, want %s", err.Code, ErrCodeExecutionFailed)
+	}
+	if err.HTTPStatus != http.StatusUnprocessableEntity {
+		t.Errorf("HTTPStatus = %d, want %d", err.HTTPStatus, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestErrHealingFailed(t *testing.T) {
+	cause := errors.New("no matching selector found")
+	err := ErrHealingFailed("could not heal selector", cause)
+
+	if err.Code != ErrCodeHealingFailed {
+		t.Errorf("Code = %s, want %s", err.Code, ErrCodeHealingFailed)
+	}
+	if err.HTTPStatus != http.StatusUnprocessableEntity {
+		t.Errorf("HTTPStatus = %d, want %d", err.HTTPStatus, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestErrQuotaExceeded(t *testing.T) {
+	err := ErrQuotaExceeded("test_runs", 100)
+
+	if err.Code != ErrCodeQuotaExceeded {
+		t.Errorf("Code = %s, want %s", err.Code, ErrCodeQuotaExceeded)
+	}
+	if err.HTTPStatus != http.StatusForbidden {
+		t.Errorf("HTTPStatus = %d, want %d", err.HTTPStatus, http.StatusForbidden)
+	}
+	if err.Metadata["resource"] != "test_runs" {
+		t.Errorf("Metadata[resource] = %v, want 'test_runs'", err.Metadata["resource"])
+	}
+	if err.Metadata["limit"] != 100 {
+		t.Errorf("Metadata[limit] = %v, want 100", err.Metadata["limit"])
+	}
+}
+
+func TestIsAppError(t *testing.T) {
+	appErr := ErrNotFound("user", "123")
+	regularErr := errors.New("regular error")
+
+	if !IsAppError(appErr) {
+		t.Error("IsAppError should return true for AppError")
+	}
+	if IsAppError(regularErr) {
+		t.Error("IsAppError should return false for regular error")
+	}
+	if IsAppError(nil) {
+		t.Error("IsAppError should return false for nil")
+	}
+}
+
+func TestWrapError(t *testing.T) {
+	cause := errors.New("underlying error")
+	wrapped := WrapError(cause, "CUSTOM_ERROR", "Custom error message", http.StatusBadRequest)
+
+	if wrapped.Code != "CUSTOM_ERROR" {
+		t.Errorf("Code = %s, want CUSTOM_ERROR", wrapped.Code)
+	}
+	if wrapped.Message != "Custom error message" {
+		t.Errorf("Message = %s, want 'Custom error message'", wrapped.Message)
+	}
+	if wrapped.HTTPStatus != http.StatusBadRequest {
+		t.Errorf("HTTPStatus = %d, want %d", wrapped.HTTPStatus, http.StatusBadRequest)
+	}
+	if !errors.Is(wrapped, cause) {
+		t.Error("Should wrap the cause error")
+	}
+}
+
+func TestGetErrorCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode string
+	}{
+		{
+			name:     "AppError returns its code",
+			err:      ErrNotFound("user", "123"),
+			wantCode: ErrCodeNotFound,
+		},
+		{
+			name:     "validation error",
+			err:      ErrValidation("invalid input"),
+			wantCode: ErrCodeValidation,
+		},
+		{
+			name:     "regular error returns INTERNAL_ERROR",
+			err:      errors.New("random error"),
+			wantCode: ErrCodeInternal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetErrorCode(tt.err)
+			if got != tt.wantCode {
+				t.Errorf("GetErrorCode() = %s, want %s", got, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestDomainError_Unwrap(t *testing.T) {
+	inner := errors.New("inner error")
+	err := &DomainError{
+		Code:    "TEST",
+		Message: "outer error",
+		Err:     inner,
+	}
+
+	unwrapped := err.Unwrap()
+	if unwrapped != inner {
+		t.Error("Unwrap should return the inner error")
+	}
+}
+
+func TestDomainError_Is(t *testing.T) {
+	err1 := &DomainError{Code: ErrCodeNotFound, Message: "not found 1"}
+	err2 := &DomainError{Code: ErrCodeNotFound, Message: "not found 2"}
+	err3 := &DomainError{Code: ErrCodeValidation, Message: "validation"}
+	regularErr := errors.New("not a domain error")
+
+	if !err1.Is(err2) {
+		t.Error("DomainErrors with same code should match")
+	}
+	if err1.Is(err3) {
+		t.Error("DomainErrors with different codes should not match")
+	}
+	if err1.Is(regularErr) {
+		t.Error("DomainError should not match regular error")
+	}
+}
+
+func TestAppError_Is(t *testing.T) {
+	err1 := NewError(ErrCodeNotFound, "not found 1", http.StatusNotFound)
+	err2 := NewError(ErrCodeNotFound, "not found 2", http.StatusNotFound)
+	err3 := NewError(ErrCodeValidation, "validation", http.StatusBadRequest)
+
+	if !err1.Is(err2) {
+		t.Error("AppErrors with same code should match")
+	}
+	if err1.Is(err3) {
+		t.Error("AppErrors with different codes should not match")
+	}
+}
