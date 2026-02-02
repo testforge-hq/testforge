@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package vjepa;
+
+option go_package = "github.com/testforge/testforge/internal/vjepa/proto";
+
+service VJEPAService {
+    // Compare two frames and return semantic similarity
+    rpc CompareFrames(CompareFramesRequest) returns (CompareFramesResponse);
+
+    // Detect if UI is stable (not loading/animating)
+    rpc DetectStability(DetectStabilityRequest) returns (DetectStabilityResponse);
+
+    // Generate embedding vector for a frame
+    rpc GenerateEmbedding(GenerateEmbeddingRequest) returns (GenerateEmbeddingResponse);
+
+    // Compare multiple frame pairs (batch)
+    rpc BatchCompare(BatchCompareRequest) returns (BatchCompareResponse);
+
+    // Analyze and describe changes between frames
+    rpc AnalyzeChange(AnalyzeChangeRequest) returns (AnalyzeChangeResponse);
+
+    // Health check
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message CompareFramesRequest {
+    // Image data (base64 or URI)
+    bytes baseline_data = 1;
+    string baseline_uri = 2;
+    bytes actual_data = 3;
+    string actual_uri = 4;
+
+    // Context for better comparison
+    string context = 5;  // e.g., "login form submission"
+
+    // Comparison settings
+    CompareSettings settings = 6;
+}
+
+message CompareSettings {
+    float similarity_threshold = 1;  // Default 0.85
+    bool ignore_colors = 2;          // Focus on structure, not colors
+    bool ignore_text_content = 3;    // Focus on layout, not text
+    repeated Region ignore_regions = 4;  // Areas to ignore (e.g., timestamps)
+}
+
+message Region {
+    int32 x = 1;
+    int32 y = 2;
+    int32 width = 3;
+    int32 height = 4;
+}
+
+message CompareFramesResponse {
+    float similarity_score = 1;      // 0.0 to 1.0
+    bool semantic_match = 2;         // True if semantically equivalent
+    float confidence = 3;            // Model confidence
+
+    // Detailed analysis
+    repeated ChangedRegion changed_regions = 4;
+    string analysis = 5;             // Human-readable description
+
+    // Embeddings (for caching)
+    bytes baseline_embedding = 6;
+    bytes actual_embedding = 7;
+}
+
+message ChangedRegion {
+    Region region = 1;
+    string change_type = 2;  // added, removed, modified
+    float significance = 3;  // How significant is this change (0-1)
+    string description = 4;  // What changed
+}
+
+message DetectStabilityRequest {
+    // Sequence of frames to analyze
+    repeated bytes frames = 1;
+    repeated string frame_uris = 2;
+
+    // Settings
+    float stability_threshold = 3;  // Default 0.98
+    int32 min_stable_frames = 4;    // Default 3
+}
+
+message DetectStabilityResponse {
+    bool is_stable = 1;
+    int32 stable_frame_index = 2;   // First stable frame
+    float stability_score = 3;
+    string analysis = 4;            // e.g., "Loading spinner detected"
+}
+
+message GenerateEmbeddingRequest {
+    bytes image_data = 1;
+    string image_uri = 2;
+
+    // Options
+    bool normalize = 3;  // L2 normalize embedding
+}
+
+message GenerateEmbeddingResponse {
+    bytes embedding = 1;         // Float32 array as bytes
+    int32 embedding_dim = 2;     // Dimension (e.g., 1024)
+    string model_version = 3;    // For compatibility tracking
+}
+
+message BatchCompareRequest {
+    repeated FramePair pairs = 1;
+    CompareSettings settings = 2;
+}
+
+message FramePair {
+    string pair_id = 1;
+    bytes baseline_data = 2;
+    string baseline_uri = 3;
+    bytes actual_data = 4;
+    string actual_uri = 5;
+    string context = 6;
+}
+
+message BatchCompareResponse {
+    repeated BatchCompareResult results = 1;
+    float average_similarity = 2;
+    int32 matches = 3;
+    int32 mismatches = 4;
+}
+
+message BatchCompareResult {
+    string pair_id = 1;
+    CompareFramesResponse result = 2;
+}
+
+message AnalyzeChangeRequest {
+    bytes before_data = 1;
+    string before_uri = 2;
+    bytes after_data = 3;
+    string after_uri = 4;
+    string action_performed = 5;  // e.g., "clicked submit button"
+}
+
+message AnalyzeChangeResponse {
+    string description = 1;          // Human-readable change description
+    repeated string changes = 2;     // List of detected changes
+    bool expected_change = 3;        // Does change match expected behavior?
+    float confidence = 4;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+    bool healthy = 1;
+    string model_loaded = 2;
+    string device = 3;           // cuda:0, cpu
+    int64 memory_used_mb = 4;
+    int64 memory_total_mb = 5;
+    float avg_inference_ms = 6;
+}

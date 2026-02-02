@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  vjepa:
+    build:
+      context: ./services/vjepa
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+    environment:
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - vjepa-models:/app/models
+      - vjepa-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; c=grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(c).result(timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - testforge-network
+    # For GPU support, uncomment below:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  vjepa-models:
+  vjepa-cache:
+
+networks:
+  testforge-network:
+    external: true
