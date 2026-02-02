@@ -19,6 +19,8 @@ spec:
         app: testforge-worker
     spec:
       serviceAccountName: testforge-worker
+      imagePullSecrets:
+        - name: ghcr-secret
       initContainers:
         - name: wait-for-deps
           image: busybox:1.36
@@ -41,8 +43,8 @@ spec:
               echo "All dependencies ready"
       containers:
         - name: worker
-          image: docker.io/testforge/worker:latest
-          imagePullPolicy: Never
+          image: ghcr.io/testforge-hq/testforge/worker:v0.1.0
+          imagePullPolicy: Always
           envFrom:
             - secretRef:
                 name: testforge-secrets
