@@ -87,7 +87,22 @@ func main() {
 		logger.Fatal("Failed to create execution activity", zap.Error(err))
 	}
 
-	healingActivity := healing.NewActivity()
+	// Create healing activity with Claude and V-JEPA configuration
+	healingCfg := healing.Config{
+		ClaudeAPIKey:        cfg.Claude.APIKey,
+		ClaudeModel:         cfg.Claude.Model,
+		VJEPAEndpoint:       cfg.VJEPA.Address(),
+		SimilarityThreshold: 0.85,
+		MaxAttempts:         3,
+		TimeoutSeconds:      60,
+		EnableVisualHealing: cfg.VJEPA.Host != "",
+	}
+
+	healingActivity, err := healing.NewActivity(healingCfg, logger)
+	if err != nil {
+		logger.Warn("Failed to create healing activity, healing will be disabled", zap.Error(err))
+	}
+
 	reportingActivity := reporting.NewActivity()
 
 	w.RegisterActivityWithOptions(discoveryActivity.Execute, activity.RegisterOptions{
@@ -102,9 +117,11 @@ func main() {
 	w.RegisterActivityWithOptions(executionActivity.Execute, activity.RegisterOptions{
 		Name: workflows.ExecutionActivityName,
 	})
-	w.RegisterActivityWithOptions(healingActivity.Execute, activity.RegisterOptions{
-		Name: workflows.HealingActivityName,
-	})
+	if healingActivity != nil {
+		w.RegisterActivityWithOptions(healingActivity.Heal, activity.RegisterOptions{
+			Name: workflows.HealingActivityName,
+		})
+	}
 	w.RegisterActivityWithOptions(reportingActivity.Execute, activity.RegisterOptions{
 		Name: workflows.ReportActivityName,
 	})
