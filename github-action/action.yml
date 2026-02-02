@@ -1,0 +1,241 @@
+name: 'TestForge'
+description: 'Run AI-powered end-to-end tests with TestForge'
+author: 'TestForge'
+branding:
+  icon: 'check-circle'
+  color: 'purple'
+
+inputs:
+  api-key:
+    description: 'TestForge API key'
+    required: true
+  project-id:
+    description: 'TestForge project ID'
+    required: true
+  base-url:
+    description: 'TestForge API base URL'
+    required: false
+    default: 'https://api.testforge.io'
+  wait-for-results:
+    description: 'Wait for test results before completing'
+    required: false
+    default: 'true'
+  timeout:
+    description: 'Timeout in minutes for waiting for results'
+    required: false
+    default: '30'
+  post-pr-comment:
+    description: 'Post results as a PR comment'
+    required: false
+    default: 'true'
+  fail-on-error:
+    description: 'Fail the action if tests fail'
+    required: false
+    default: 'true'
+  environment:
+    description: 'Test environment (staging, production)'
+    required: false
+    default: 'staging'
+  target-url:
+    description: 'Override target URL for testing'
+    required: false
+  variables:
+    description: 'JSON object of test variables'
+    required: false
+
+outputs:
+  run-id:
+    description: 'TestForge run ID'
+    value: ${{ steps.run.outputs.run-id }}
+  status:
+    description: 'Test run status (passed, failed, error)'
+    value: ${{ steps.run.outputs.status }}
+  total-tests:
+    description: 'Total number of tests'
+    value: ${{ steps.run.outputs.total-tests }}
+  passed-tests:
+    description: 'Number of passed tests'
+    value: ${{ steps.run.outputs.passed-tests }}
+  failed-tests:
+    description: 'Number of failed tests'
+    value: ${{ steps.run.outputs.failed-tests }}
+  report-url:
+    description: 'URL to full test report'
+    value: ${{ steps.run.outputs.report-url }}
+  duration:
+    description: 'Test run duration'
+    value: ${{ steps.run.outputs.duration }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Run TestForge Tests
+      id: run
+      shell: bash
+      env:
+        TESTFORGE_API_KEY: ${{ inputs.api-key }}
+        TESTFORGE_PROJECT_ID: ${{ inputs.project-id }}
+        TESTFORGE_BASE_URL: ${{ inputs.base-url }}
+        TESTFORGE_WAIT: ${{ inputs.wait-for-results }}
+        TESTFORGE_TIMEOUT: ${{ inputs.timeout }}
+        TESTFORGE_TARGET_URL: ${{ inputs.target-url }}
+        TESTFORGE_ENVIRONMENT: ${{ inputs.environment }}
+        TESTFORGE_VARIABLES: ${{ inputs.variables }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        # Start test run
+        echo "Starting TestForge test run..."
+
+        PAYLOAD='{"project_id":"'"$TESTFORGE_PROJECT_ID"'"'
+
+        if [ -n "$TESTFORGE_TARGET_URL" ]; then
+          PAYLOAD="${PAYLOAD},\"target_url\":\"$TESTFORGE_TARGET_URL\""
+        fi
+
+        if [ -n "$TESTFORGE_ENVIRONMENT" ]; then
+          PAYLOAD="${PAYLOAD},\"environment\":\"$TESTFORGE_ENVIRONMENT\""
+        fi
+
+        if [ -n "$TESTFORGE_VARIABLES" ]; then
+          PAYLOAD="${PAYLOAD},\"variables\":$TESTFORGE_VARIABLES"
+        fi
+
+        # Add GitHub context
+        PAYLOAD="${PAYLOAD},\"metadata\":{\"github_sha\":\"$GITHUB_SHA\",\"github_ref\":\"$GITHUB_REF\",\"github_run_id\":\"$GITHUB_RUN_ID\"}}"
+
+        # Create test run
+        RESPONSE=$(curl -s -X POST \
+          -H "Authorization: Bearer $TESTFORGE_API_KEY" \
+          -H "Content-Type: application/json" \
+          -d "$PAYLOAD" \
+          "$TESTFORGE_BASE_URL/api/v1/testruns")
+
+        RUN_ID=$(echo "$RESPONSE" | jq -r '.id')
+
+        if [ "$RUN_ID" == "null" ] || [ -z "$RUN_ID" ]; then
+          echo "Error: Failed to create test run"
+          echo "$RESPONSE"
+          exit 1
+        fi
+
+        echo "Test run created: $RUN_ID"
+        echo "run-id=$RUN_ID" >> $GITHUB_OUTPUT
+
+        # Wait for results if requested
+        if [ "$TESTFORGE_WAIT" == "true" ]; then
+          echo "Waiting for test results..."
+
+          TIMEOUT_SECONDS=$((TESTFORGE_TIMEOUT * 60))
+          START_TIME=$(date +%s)
+
+          while true; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+
+            if [ $ELAPSED -ge $TIMEOUT_SECONDS ]; then
+              echo "Error: Timeout waiting for results"
+              exit 1
+            fi
+
+            STATUS_RESPONSE=$(curl -s \
+              -H "Authorization: Bearer $TESTFORGE_API_KEY" \
+              "$TESTFORGE_BASE_URL/api/v1/testruns/$RUN_ID")
+
+            STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status')
+
+            if [ "$STATUS" == "completed" ] || [ "$STATUS" == "failed" ] || [ "$STATUS" == "error" ]; then
+              break
+            fi
+
+            echo "Status: $STATUS, waiting..."
+            sleep 10
+          done
+
+          # Extract results
+          TOTAL=$(echo "$STATUS_RESPONSE" | jq -r '.total_tests // 0')
+          PASSED=$(echo "$STATUS_RESPONSE" | jq -r '.passed_tests // 0')
+          FAILED=$(echo "$STATUS_RESPONSE" | jq -r '.failed_tests // 0')
+          DURATION=$(echo "$STATUS_RESPONSE" | jq -r '.duration // "unknown"')
+
+          echo "total-tests=$TOTAL" >> $GITHUB_OUTPUT
+          echo "passed-tests=$PASSED" >> $GITHUB_OUTPUT
+          echo "failed-tests=$FAILED" >> $GITHUB_OUTPUT
+          echo "duration=$DURATION" >> $GITHUB_OUTPUT
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+          REPORT_URL="$TESTFORGE_BASE_URL/runs/$RUN_ID"
+          echo "report-url=$REPORT_URL" >> $GITHUB_OUTPUT
+
+          echo ""
+          echo "========================"
+          echo "TestForge Results"
+          echo "========================"
+          echo "Status: $STATUS"
+          echo "Total: $TOTAL"
+          echo "Passed: $PASSED"
+          echo "Failed: $FAILED"
+          echo "Duration: $DURATION"
+          echo "Report: $REPORT_URL"
+          echo "========================"
+
+          # Create results directory
+          mkdir -p testforge-results
+          echo "$STATUS_RESPONSE" > testforge-results/results.json
+
+          # Set exit code based on status
+          if [ "$STATUS" != "completed" ] && [ "${{ inputs.fail-on-error }}" == "true" ]; then
+            exit 1
+          fi
+
+          if [ "$FAILED" != "0" ] && [ "${{ inputs.fail-on-error }}" == "true" ]; then
+            exit 1
+          fi
+        fi
+
+    - name: Post PR Comment
+      if: ${{ inputs.post-pr-comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        RUN_ID: ${{ steps.run.outputs.run-id }}
+        TOTAL: ${{ steps.run.outputs.total-tests }}
+        PASSED: ${{ steps.run.outputs.passed-tests }}
+        FAILED: ${{ steps.run.outputs.failed-tests }}
+        DURATION: ${{ steps.run.outputs.duration }}
+        STATUS: ${{ steps.run.outputs.status }}
+        REPORT_URL: ${{ steps.run.outputs.report-url }}
+        BADGE_URL: ${{ inputs.base-url }}/badges/${{ inputs.project-id }}.svg
+      run: |
+        if [ "$STATUS" == "completed" ] && [ "$FAILED" == "0" ]; then
+          STATUS_EMOJI="✅"
+        elif [ "$FAILED" != "0" ]; then
+          STATUS_EMOJI="❌"
+        else
+          STATUS_EMOJI="⚠️"
+        fi
+
+        COMMENT_BODY="## TestForge Results $STATUS_EMOJI
+
+        | Metric | Value |
+        |--------|-------|
+        | Total Tests | $TOTAL |
+        | Passed | $PASSED |
+        | Failed | $FAILED |
+        | Duration | $DURATION |
+
+        [View Full Report]($REPORT_URL)
+
+        ---
+        🤖 Generated with [TestForge](https://testforge.io)"
+
+        # Post comment using GitHub API
+        curl -s -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+          -d "$(jq -n --arg body "$COMMENT_BODY" '{"body": $body}')"

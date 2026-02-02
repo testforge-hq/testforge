@@ -66,6 +66,9 @@ type Config struct {
 
 	// Security
 	Security SecurityConfig
+
+	// Secrets management
+	Secrets SecretsConfig
 }
 
 // AppConfig holds application metadata
@@ -249,6 +252,25 @@ type SecurityConfig struct {
 	TLSEnabled  bool   `envconfig:"TLS_ENABLED" default:"false"`
 	TLSCertFile string `envconfig:"TLS_CERT_FILE" default:""`
 	TLSKeyFile  string `envconfig:"TLS_KEY_FILE" default:""`
+}
+
+// SecretsConfig holds secret management configuration
+type SecretsConfig struct {
+	// Provider type: "env", "vault", "k8s"
+	Provider string `envconfig:"SECRETS_PROVIDER" default:"env"`
+
+	// Vault configuration
+	VaultAddress   string `envconfig:"VAULT_ADDR" default:""`
+	VaultToken     string `envconfig:"VAULT_TOKEN" default:""`
+	VaultMountPath string `envconfig:"VAULT_MOUNT_PATH" default:"secret"`
+	VaultNamespace string `envconfig:"VAULT_NAMESPACE" default:""`
+
+	// Kubernetes secrets configuration
+	K8sNamespace      string `envconfig:"K8S_SECRETS_NAMESPACE" default:"testforge"`
+	K8sServiceAccount string `envconfig:"K8S_SERVICE_ACCOUNT" default:""`
+
+	// Caching
+	CacheTTL time.Duration `envconfig:"SECRETS_CACHE_TTL" default:"5m"`
 }
 
 // Load loads configuration from environment variables

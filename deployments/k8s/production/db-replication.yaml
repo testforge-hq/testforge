@@ -1,0 +1,305 @@
+# PostgreSQL Streaming Replication Configuration
+# Uses PostgreSQL operator or manual configuration for primary-replica setup
+---
+# ConfigMap for PostgreSQL replication settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-replication-config
+  namespace: testforge-data
+data:
+  # Primary server settings
+  postgresql.primary.conf: |
+    # Replication settings
+    wal_level = replica
+    max_wal_senders = 10
+    max_replication_slots = 10
+    wal_keep_size = 1GB
+    hot_standby = on
+
+    # Synchronous replication (for strong consistency)
+    # synchronous_commit = on
+    # synchronous_standby_names = 'replica1,replica2'
+
+    # Archive settings (for point-in-time recovery)
+    archive_mode = on
+    archive_command = 'aws s3 cp %p s3://testforge-wal-archive/%f'
+
+    # Connection settings
+    listen_addresses = '*'
+
+    # Performance tuning
+    shared_buffers = 4GB
+    effective_cache_size = 12GB
+    work_mem = 256MB
+    maintenance_work_mem = 1GB
+
+  # Replica server settings
+  postgresql.replica.conf: |
+    hot_standby = on
+    hot_standby_feedback = on
+    max_standby_streaming_delay = 30s
+    max_standby_archive_delay = 60s
+
+  # pg_hba.conf for replication
+  pg_hba.conf: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    local   all             all                                     trust
+    host    all             all             127.0.0.1/32            trust
+    host    all             all             ::1/128                 trust
+    host    all             all             0.0.0.0/0               scram-sha-256
+    host    replication     replication     10.0.0.0/8              scram-sha-256
+    host    replication     replication     172.16.0.0/12           scram-sha-256
+---
+# Primary PostgreSQL StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-primary
+  namespace: testforge-data
+  labels:
+    app: postgres
+    role: primary
+spec:
+  serviceName: postgres-primary
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+      role: primary
+  template:
+    metadata:
+      labels:
+        app: postgres
+        role: primary
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: config
+              mountPath: /etc/postgresql/conf.d
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "2"
+            limits:
+              memory: "8Gi"
+              cpu: "4"
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: postgres-replication-config
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3-encrypted
+        resources:
+          requests:
+            storage: 100Gi
+---
+# Service for primary PostgreSQL
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary
+  namespace: testforge-data
+  labels:
+    app: postgres
+    role: primary
+spec:
+  selector:
+    app: postgres
+    role: primary
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+# Replica PostgreSQL StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-replica
+  namespace: testforge-data
+  labels:
+    app: postgres
+    role: replica
+spec:
+  serviceName: postgres-replica
+  replicas: 2
+  selector:
+    matchLabels:
+      app: postgres
+      role: replica
+  template:
+    metadata:
+      labels:
+        app: postgres
+        role: replica
+    spec:
+      initContainers:
+        - name: init-replica
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              if [ ! -f /var/lib/postgresql/data/pgdata/PG_VERSION ]; then
+                echo "Initializing replica from primary..."
+                PGPASSWORD=$REPLICATION_PASSWORD pg_basebackup \
+                  -h postgres-primary \
+                  -U replication \
+                  -D /var/lib/postgresql/data/pgdata \
+                  -Fp -Xs -P -R
+              fi
+          env:
+            - name: REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-replication-secret
+                  key: REPLICATION_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: config
+              mountPath: /etc/postgresql/conf.d
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - $(POSTGRES_USER)
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: postgres-replication-config
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3-encrypted
+        resources:
+          requests:
+            storage: 100Gi
+---
+# Service for replica PostgreSQL (read-only queries)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-replica
+  namespace: testforge-data
+  labels:
+    app: postgres
+    role: replica
+spec:
+  selector:
+    app: postgres
+    role: replica
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+# Secret for replication user
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-replication-secret
+  namespace: testforge-data
+type: Opaque
+stringData:
+  REPLICATION_USER: replication
+  REPLICATION_PASSWORD: "change-me-to-secure-password"
+---
+# PodDisruptionBudget for replicas
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-replica-pdb
+  namespace: testforge-data
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgres
+      role: replica

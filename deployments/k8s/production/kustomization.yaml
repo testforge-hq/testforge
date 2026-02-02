@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: testforge
+
+resources:
+  - multi-region.yaml
+  - global-lb.yaml
+  - db-replication.yaml
+
+commonLabels:
+  app.kubernetes.io/name: testforge
+  app.kubernetes.io/part-of: testforge-platform
+  environment: production
+
+# Replace variables with actual values during deployment
+# Use: envsubst < multi-region.yaml | kubectl apply -f -
+# Or configure these in your CI/CD pipeline
+
+# Example patches for different regions
+# patchesStrategicMerge:
+#   - patches/us-east-1.yaml
+#   - patches/us-west-2.yaml
+#   - patches/eu-west-1.yaml

@@ -1,0 +1,246 @@
+# Multi-Region Deployment Configuration
+# Deploys TestForge across multiple regions with regional failover
+---
+# ConfigMap for region-specific configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: region-config
+  namespace: testforge
+data:
+  REGION: "${REGION}"
+  REGION_DISPLAY_NAME: "${REGION_DISPLAY_NAME}"
+  PRIMARY_REGION: "us-east-1"
+  FAILOVER_REGIONS: "us-west-2,eu-west-1"
+---
+# Regional API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testforge-api-${REGION}
+  namespace: testforge
+  labels:
+    app: testforge-api
+    region: ${REGION}
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: testforge-api
+      region: ${REGION}
+  template:
+    metadata:
+      labels:
+        app: testforge-api
+        region: ${REGION}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: testforge-api
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: testforge-api
+                topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: topology.kubernetes.io/region
+                    operator: In
+                    values:
+                      - ${REGION}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: testforge-api
+      containers:
+        - name: api
+          image: testforge/api:${VERSION}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          envFrom:
+            - secretRef:
+                name: testforge-secrets
+            - configMapRef:
+                name: testforge-config
+            - configMapRef:
+                name: region-config
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+---
+# Regional Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testforge-worker-${REGION}
+  namespace: testforge
+  labels:
+    app: testforge-worker
+    region: ${REGION}
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: testforge-worker
+      region: ${REGION}
+  template:
+    metadata:
+      labels:
+        app: testforge-worker
+        region: ${REGION}
+    spec:
+      serviceAccountName: testforge-worker
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: topology.kubernetes.io/region
+                    operator: In
+                    values:
+                      - ${REGION}
+      containers:
+        - name: worker
+          image: testforge/worker:${VERSION}
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: testforge-secrets
+            - configMapRef:
+                name: testforge-config
+            - configMapRef:
+                name: region-config
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "1000m"
+            limits:
+              memory: "4Gi"
+              cpu: "4000m"
+---
+# Pod Disruption Budget for API
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: testforge-api-pdb
+  namespace: testforge
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: testforge-api
+---
+# Pod Disruption Budget for Worker
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: testforge-worker-pdb
+  namespace: testforge
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: testforge-worker
+---
+# Horizontal Pod Autoscaler for API
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: testforge-api-hpa-${REGION}
+  namespace: testforge
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: testforge-api-${REGION}
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+---
+# Regional Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: testforge-api-${REGION}
+  namespace: testforge
+  labels:
+    app: testforge-api
+    region: ${REGION}
+  annotations:
+    service.kubernetes.io/topology-aware-hints: "auto"
+spec:
+  selector:
+    app: testforge-api
+    region: ${REGION}
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+    - port: 9090
+      targetPort: 9090
+      name: metrics
+  type: ClusterIP

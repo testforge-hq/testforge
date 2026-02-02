@@ -48,22 +48,24 @@ func NewTestRunHandler(
 
 // TestRunResponse is the API representation of a test run
 type TestRunResponse struct {
-	ID              string                  `json:"id"`
-	TenantID        string                  `json:"tenant_id"`
-	ProjectID       string                  `json:"project_id"`
-	Status          string                  `json:"status"`
-	TargetURL       string                  `json:"target_url"`
-	WorkflowID      string                  `json:"workflow_id,omitempty"`
-	WorkflowStatus  string                  `json:"workflow_status,omitempty"`
-	DiscoveryResult *domain.DiscoveryResult `json:"discovery_result,omitempty"`
-	TestPlan        *domain.TestPlan        `json:"test_plan,omitempty"`
-	Summary         *domain.RunSummary      `json:"summary,omitempty"`
-	ReportURL       string                  `json:"report_url,omitempty"`
-	TriggeredBy     string                  `json:"triggered_by"`
-	StartedAt       *string                 `json:"started_at,omitempty"`
-	CompletedAt     *string                 `json:"completed_at,omitempty"`
-	CreatedAt       string                  `json:"created_at"`
-	UpdatedAt       string                  `json:"updated_at"`
+	ID              string                    `json:"id"`
+	TenantID        string                    `json:"tenant_id"`
+	ProjectID       string                    `json:"project_id"`
+	Status          string                    `json:"status"`
+	TargetURL       string                    `json:"target_url"`
+	WorkflowID      string                    `json:"workflow_id,omitempty"`
+	WorkflowStatus  string                    `json:"workflow_status,omitempty"`
+	DiscoveryResult *domain.DiscoveryResult   `json:"discovery_result,omitempty"`
+	AIAnalysis      *domain.AIAnalysisResult  `json:"ai_analysis,omitempty"`
+	TestPlan        *domain.TestPlan          `json:"test_plan,omitempty"`
+	Summary         *domain.RunSummary        `json:"summary,omitempty"`
+	ReportURL       string                    `json:"report_url,omitempty"`
+	TriggeredBy     string                    `json:"triggered_by"`
+	AIEnabled       bool                      `json:"ai_enabled"`
+	StartedAt       *string                   `json:"started_at,omitempty"`
+	CompletedAt     *string                   `json:"completed_at,omitempty"`
+	CreatedAt       string                    `json:"created_at"`
+	UpdatedAt       string                    `json:"updated_at"`
 }
 
 func toTestRunResponse(r *domain.TestRun) TestRunResponse {
@@ -75,10 +77,12 @@ func toTestRunResponse(r *domain.TestRun) TestRunResponse {
 		TargetURL:       r.TargetURL,
 		WorkflowID:      r.WorkflowID,
 		DiscoveryResult: r.DiscoveryResult,
+		AIAnalysis:      r.AIAnalysis,
 		TestPlan:        r.TestPlan,
 		Summary:         r.Summary,
 		ReportURL:       r.ReportURL,
 		TriggeredBy:     r.TriggeredBy,
+		AIEnabled:       r.AIEnabled,
 		CreatedAt:       r.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:       r.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
@@ -180,8 +184,10 @@ func (h *TestRunHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // CreateTestRunRequest is the request body for creating a test run
 type CreateTestRunRequest struct {
-	ProjectID string `json:"project_id"`
-	TargetURL string `json:"target_url,omitempty"`
+	ProjectID         string `json:"project_id"`
+	TargetURL         string `json:"target_url,omitempty"`
+	EnableAIDiscovery bool   `json:"enable_ai_discovery,omitempty"` // Use AI-powered multi-agent discovery
+	EnableABA         bool   `json:"enable_aba,omitempty"`          // Enable Autonomous Business Analyst
 }
 
 // Create handles POST /api/v1/runs
@@ -257,7 +263,12 @@ func (h *TestRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 		triggeredBy = "user:" + userID
 	}
 
+	// Determine AI settings - request overrides project defaults
+	enableAI := req.EnableAIDiscovery || project.Settings.EnableAIDiscovery
+	enableABA := req.EnableABA || project.Settings.EnableABA
+
 	run := domain.NewTestRun(tenantID, projectID, targetURL, triggeredBy)
+	run.AIEnabled = enableAI
 
 	if err := h.repo.Create(r.Context(), run); err != nil {
 		h.logger.Error("Failed to create test run", zap.Error(err))
@@ -279,6 +290,8 @@ func (h *TestRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 			MaxTestCases:       tenant.Settings.MaxTestCasesPerRun,
 			EnableSelfHealing:  tenant.Settings.EnableSelfHealing,
 			EnableVisualTesting: tenant.Settings.EnableVisualTesting,
+			EnableAIDiscovery:  enableAI,
+			EnableABA:          enableABA,
 			Browser:            project.Settings.DefaultBrowser,
 			ViewportWidth:      project.Settings.ViewportWidth,
 			ViewportHeight:     project.Settings.ViewportHeight,
@@ -290,7 +303,13 @@ func (h *TestRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 			TaskQueue: h.taskQueue,
 		}
 
-		workflowRun, err := h.temporalClient.ExecuteWorkflow(r.Context(), workflowOptions, workflows.MasterOrchestrationWorkflow, workflowInput)
+		// Choose workflow based on AI mode
+		var workflowRun client.WorkflowRun
+		if enableAI {
+			workflowRun, err = h.temporalClient.ExecuteWorkflow(r.Context(), workflowOptions, workflows.AIEnhancedOrchestrationWorkflow, workflowInput)
+		} else {
+			workflowRun, err = h.temporalClient.ExecuteWorkflow(r.Context(), workflowOptions, workflows.MasterOrchestrationWorkflow, workflowInput)
+		}
 		if err != nil {
 			h.logger.Error("Failed to start workflow", zap.Error(err))
 			// Don't fail the request, just log the error
@@ -316,6 +335,8 @@ func (h *TestRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 		zap.String("run_id", run.ID.String()),
 		zap.String("project_id", projectID.String()),
 		zap.String("workflow_id", run.WorkflowID),
+		zap.Bool("ai_enabled", enableAI),
+		zap.Bool("aba_enabled", enableABA),
 	)
 
 	httputil.JSON(w, http.StatusCreated, toTestRunResponse(run))

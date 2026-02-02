@@ -1,0 +1,164 @@
+# Global Load Balancer Configuration
+# Supports AWS Global Accelerator, Cloudflare Load Balancer, or GCP Global LB
+---
+# External DNS configuration (for Cloudflare)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: global-lb-config
+  namespace: testforge
+data:
+  # Global domain
+  GLOBAL_DOMAIN: "api.testforge.io"
+
+  # Regional endpoints
+  US_EAST_ENDPOINT: "api-us-east.testforge.io"
+  US_WEST_ENDPOINT: "api-us-west.testforge.io"
+  EU_WEST_ENDPOINT: "api-eu-west.testforge.io"
+
+  # Health check settings
+  HEALTH_CHECK_PATH: "/health"
+  HEALTH_CHECK_INTERVAL: "30"
+  HEALTH_CHECK_TIMEOUT: "10"
+---
+# Ingress for regional API (AWS ALB Ingress)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: testforge-api-ingress
+  namespace: testforge
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "30"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "10"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: "${ACM_CERTIFICATE_ARN}"
+    # WAF integration
+    alb.ingress.kubernetes.io/wafv2-acl-arn: "${WAF_ACL_ARN}"
+    # Access logs
+    alb.ingress.kubernetes.io/load-balancer-attributes: access_logs.s3.enabled=true,access_logs.s3.bucket=testforge-alb-logs,access_logs.s3.prefix=api
+spec:
+  rules:
+    - host: api.testforge.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: testforge-api
+                port:
+                  number: 8080
+    - host: "*.testforge.io"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: testforge-api
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - api.testforge.io
+        - "*.testforge.io"
+---
+# Service for external traffic (LoadBalancer for direct access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: testforge-api-external
+  namespace: testforge
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-proxy-protocol: "*"
+    external-dns.alpha.kubernetes.io/hostname: api-${REGION}.testforge.io
+    external-dns.alpha.kubernetes.io/ttl: "300"
+spec:
+  type: LoadBalancer
+  selector:
+    app: testforge-api
+  ports:
+    - port: 443
+      targetPort: 8080
+      name: https
+---
+# AWS Global Accelerator endpoint group (apply via AWS CLI/Terraform)
+# This is a reference configuration for documentation purposes
+#
+# aws globalaccelerator create-endpoint-group \
+#   --listener-arn ${LISTENER_ARN} \
+#   --endpoint-group-region us-east-1 \
+#   --endpoint-configurations "EndpointId=${NLB_ARN},Weight=100" \
+#   --health-check-port 8080 \
+#   --health-check-protocol HTTP \
+#   --health-check-path /health \
+#   --health-check-interval-seconds 30 \
+#   --threshold-count 3
+---
+# ServiceMonitor for Prometheus (if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: testforge-api-monitor
+  namespace: testforge
+  labels:
+    app: testforge-api
+spec:
+  selector:
+    matchLabels:
+      app: testforge-api
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - testforge
+---
+# PrometheusRule for alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: testforge-api-alerts
+  namespace: testforge
+spec:
+  groups:
+    - name: testforge-api
+      interval: 30s
+      rules:
+        - alert: TestForgeAPIHighLatency
+          expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job="testforge-api"}[5m])) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High API latency detected"
+            description: "99th percentile latency is above 1 second"
+
+        - alert: TestForgeAPIHighErrorRate
+          expr: sum(rate(http_requests_total{job="testforge-api",status=~"5.."}[5m])) / sum(rate(http_requests_total{job="testforge-api"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High error rate detected"
+            description: "Error rate is above 5%"
+
+        - alert: TestForgeAPIPodNotReady
+          expr: kube_deployment_status_replicas_ready{deployment=~"testforge-api.*"} < kube_deployment_spec_replicas{deployment=~"testforge-api.*"}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "API pods not ready"
+            description: "Not all API pods are ready"

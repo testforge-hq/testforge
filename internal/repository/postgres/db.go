@@ -106,20 +106,40 @@ func (db *DB) Transaction(ctx context.Context, fn func(tx *sqlx.Tx) error) error
 
 // Repositories holds all repository instances
 type Repositories struct {
+	db        *DB
 	Tenants   *TenantRepository
 	Projects  *ProjectRepository
 	TestRuns  *TestRunRepository
 	TestCases *TestCaseRepository
 	Reports   *ReportRepository
+	APIKeys   *APIKeyRepository
 }
 
 // NewRepositories creates all repository instances
 func NewRepositories(db *sqlx.DB) *Repositories {
 	return &Repositories{
+		db:        &DB{DB: db},
 		Tenants:   NewTenantRepository(db),
 		Projects:  NewProjectRepository(db),
 		TestRuns:  NewTestRunRepository(db),
 		TestCases: NewTestCaseRepository(db),
 		Reports:   NewReportRepository(db),
+		APIKeys:   NewAPIKeyRepository(db),
 	}
+}
+
+// Health checks database connectivity
+func (r *Repositories) Health(ctx context.Context) error {
+	if r.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+	return r.db.Health(ctx)
+}
+
+// DB returns the underlying database connection
+func (r *Repositories) DB() *sqlx.DB {
+	if r.db == nil {
+		return nil
+	}
+	return r.db.DB
 }

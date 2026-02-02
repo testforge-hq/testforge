@@ -44,6 +44,10 @@ type ProjectSettings struct {
 	IncludePatterns   []string `json:"include_patterns,omitempty"`
 	RespectRobotsTxt  bool     `json:"respect_robots_txt"`
 
+	// AI settings
+	EnableAIDiscovery bool `json:"enable_ai_discovery"` // Use AI-powered multi-agent discovery by default
+	EnableABA         bool `json:"enable_aba"`          // Enable Autonomous Business Analyst by default
+
 	// Custom headers/cookies
 	CustomHeaders map[string]string `json:"custom_headers,omitempty"`
 	CustomCookies []Cookie          `json:"custom_cookies,omitempty"`

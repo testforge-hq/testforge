@@ -1,0 +1,120 @@
+# TestForge Worker Deployment
+# Temporal workflow worker for test orchestration
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testforge-worker
+  namespace: testforge
+  labels:
+    app: testforge-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: testforge-worker
+  template:
+    metadata:
+      labels:
+        app: testforge-worker
+    spec:
+      serviceAccountName: testforge-worker
+      initContainers:
+        - name: wait-for-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z postgres.testforge-data.svc.cluster.local 5432; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              until nc -z redis.testforge-data.svc.cluster.local 6379; do
+                echo "Waiting for Redis..."
+                sleep 2
+              done
+              until nc -z temporal.testforge-temporal.svc.cluster.local 7233; do
+                echo "Waiting for Temporal..."
+                sleep 2
+              done
+              echo "All dependencies ready"
+      containers:
+        - name: worker
+          image: testforge/worker:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: testforge-secrets
+            - configMapRef:
+                name: testforge-config
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "pgrep -f testforge-worker"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "pgrep -f testforge-worker"
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+# Service account for worker to manage sandbox pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: testforge-worker
+  namespace: testforge
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: testforge-worker-sandbox-manager
+subjects:
+  - kind: ServiceAccount
+    name: testforge-worker
+    namespace: testforge
+roleRef:
+  kind: ClusterRole
+  name: testforge-sandbox-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# Horizontal Pod Autoscaler for worker
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: testforge-worker-hpa
+  namespace: testforge
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: testforge-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

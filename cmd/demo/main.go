@@ -48,6 +48,8 @@ func main() {
 	port := flag.Int("port", 8888, "HTTP server port for report")
 	outputDir := flag.String("output", "", "Output directory (default: /tmp/testforge-demo-<timestamp>)")
 	verbose := flag.Bool("verbose", false, "Verbose output")
+	useAICrawler := flag.Bool("ai", true, "Use AI-powered crawler with multi-agent analysis")
+	enableABA := flag.Bool("aba", true, "Enable Autonomous Business Analyst agent")
 
 	flag.Parse()
 
@@ -99,14 +101,56 @@ func main() {
 	//==========================================================================
 	// STEP 1: DISCOVERY
 	//==========================================================================
-	printStep(1, "Discovery", fmt.Sprintf("Crawling %s", *targetURL))
+	var appModel *discovery.AppModel
+	var aiResults *discovery.OrchestratorResults
 
-	appModel, err := runDiscovery(ctx, *targetURL, *maxPages, outDir, logger)
-	if err != nil {
-		red.Printf("   ❌ Discovery failed: %v\n", err)
-		// Use mock data instead
-		yellow.Println("   ⚡ Using simulated discovery data...")
-		appModel = mockAppModel(*targetURL)
+	if *useAICrawler {
+		printStep(1, "AI Discovery", fmt.Sprintf("Multi-agent analysis of %s", *targetURL))
+		cyan.Println("   🤖 Spawning agents: PageUnderstanding, ElementDiscovery, Auth, Form, BusinessFlow")
+		if *enableABA {
+			cyan.Println("   📊 ABA (Autonomous Business Analyst) enabled")
+		}
+
+		aiResults, err = runAIDiscovery(ctx, *targetURL, *maxPages, *enableABA, claudeClient, outDir, logger)
+		if err != nil {
+			red.Printf("   ❌ AI Discovery failed: %v\n", err)
+			yellow.Println("   ⚡ Falling back to basic crawler...")
+			appModel, err = runDiscovery(ctx, *targetURL, *maxPages, outDir, logger)
+			if err != nil {
+				yellow.Println("   ⚡ Using simulated discovery data...")
+				appModel = mockAppModel(*targetURL)
+			}
+		} else {
+			// Convert AI results to legacy format
+			appModel = aiResults.AppModel.ToLegacyAppModel()
+
+			// Print AI-specific results
+			green.Printf("   ✓ AI Analysis: %d pages, %d elements, %d interactions\n",
+				aiResults.Stats.PagesAnalyzed,
+				aiResults.AppModel.Stats.TotalElements,
+				aiResults.AppModel.Stats.TotalInteractions)
+
+			if aiResults.BusinessAnalysis != nil {
+				cyan.Printf("   📋 Generated %d requirements, %d user stories\n",
+					len(aiResults.BusinessAnalysis.Requirements),
+					len(aiResults.BusinessAnalysis.UserStories))
+
+				if aiResults.BusinessAnalysis.DomainAnalysis != nil {
+					dim.Printf("      Domain: %s (%s)\n",
+						aiResults.BusinessAnalysis.DomainAnalysis.Domain,
+						aiResults.BusinessAnalysis.DomainAnalysis.SubDomain)
+				}
+			}
+		}
+	} else {
+		printStep(1, "Discovery", fmt.Sprintf("Crawling %s", *targetURL))
+
+		appModel, err = runDiscovery(ctx, *targetURL, *maxPages, outDir, logger)
+		if err != nil {
+			red.Printf("   ❌ Discovery failed: %v\n", err)
+			yellow.Println("   ⚡ Using simulated discovery data...")
+			appModel = mockAppModel(*targetURL)
+		}
 	}
 
 	green.Printf("   ✓ Found %d pages, %d forms, %d buttons, %d links\n",
@@ -458,6 +502,74 @@ func runDiscovery(ctx context.Context, url string, maxPages int, outputDir strin
 	bar.Finish()
 
 	return result, err
+}
+
+func runAIDiscovery(ctx context.Context, url string, maxPages int, enableABA bool, claudeClient *llm.ClaudeClient, outputDir string, logger *zap.Logger) (*discovery.OrchestratorResults, error) {
+	// Create progress bar for AI discovery
+	bar := progressbar.NewOptions(100,
+		progressbar.OptionSetDescription("   AI analyzing..."),
+		progressbar.OptionShowCount(),
+		progressbar.OptionSetWidth(40),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "█",
+			SaucerHead:    "█",
+			SaucerPadding: "░",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+		progressbar.OptionSetPredictTime(false),
+		progressbar.OptionShowElapsedTimeOnFinish(),
+	)
+
+	// Configure orchestrator
+	cfg := discovery.DefaultOrchestratorConfig()
+	cfg.MaxPages = maxPages
+	cfg.MaxDepth = 3
+	cfg.MaxDuration = 5 * time.Minute
+	cfg.Headless = true
+	cfg.EnableABA = enableABA
+	cfg.EnableSemanticAnalysis = true
+	cfg.EnableVisualAI = false // Disable for demo unless V-JEPA is running
+	cfg.EnableAccessibility = true
+
+	// Create orchestrator with Claude client as the LLM
+	orchestrator, err := discovery.NewOrchestrator(claudeClient, cfg, logger)
+	if err != nil {
+		bar.Finish()
+		return nil, fmt.Errorf("creating orchestrator: %w", err)
+	}
+	defer orchestrator.Close()
+
+	// Set progress callback
+	orchestrator.SetProgressCallback(func(phase string, current, total int, message string) {
+		bar.Set(current)
+		bar.Describe(fmt.Sprintf("   %s: %s", phase, truncate(message, 30)))
+	})
+
+	// Run the full analysis
+	crawlCtx, cancel := context.WithTimeout(ctx, cfg.MaxDuration)
+	defer cancel()
+
+	results, err := orchestrator.Run(crawlCtx, url)
+	bar.Finish()
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Print agent timeline if verbose
+	if len(results.AgentTimeline) > 0 {
+		dim.Println("   Agent Timeline:")
+		for _, activity := range results.AgentTimeline {
+			status := "✓"
+			if !activity.Success {
+				status = "✗"
+			}
+			dim.Printf("      %s %s (%.1fs)\n", status, activity.AgentType, activity.Duration.Seconds())
+		}
+	}
+
+	return results, nil
 }
 
 func runTestDesign(ctx context.Context, client *llm.ClaudeClient, appModel *discovery.AppModel, maxTests int, logger *zap.Logger) (*testdesign.TestSuite, []string, error) {

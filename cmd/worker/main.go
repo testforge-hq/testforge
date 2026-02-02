@@ -12,13 +12,16 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	aiactivities "github.com/testforge/testforge/internal/activities/ai"
 	"github.com/testforge/testforge/internal/activities/automation"
 	"github.com/testforge/testforge/internal/activities/discovery"
 	"github.com/testforge/testforge/internal/activities/execution"
 	"github.com/testforge/testforge/internal/activities/healing"
 	"github.com/testforge/testforge/internal/activities/reporting"
+	statusactivities "github.com/testforge/testforge/internal/activities/status"
 	"github.com/testforge/testforge/internal/activities/testdesign"
 	"github.com/testforge/testforge/internal/config"
+	"github.com/testforge/testforge/internal/repository/postgres"
 	"github.com/testforge/testforge/internal/workflows"
 )
 
@@ -62,6 +65,7 @@ func main() {
 
 	// Register workflows
 	w.RegisterWorkflow(workflows.MasterOrchestrationWorkflow)
+	w.RegisterWorkflow(workflows.AIEnhancedOrchestrationWorkflow)
 
 	// Create and register activities
 	discoveryActivity := discovery.NewActivity()
@@ -139,9 +143,29 @@ func main() {
 		})
 	}
 
+	// Register AI activities for multi-agent analysis
+	aiActivityCfg := aiactivities.Config{
+		AnthropicAPIKey: cfg.Claude.APIKey,
+		Model:           cfg.Claude.Model,
+		UseMock:         cfg.Claude.APIKey == "", // Use mock if no API key
+	}
+	if err := aiactivities.RegisterActivities(w, aiActivityCfg, logger); err != nil {
+		logger.Warn("Failed to register AI activities, AI-powered discovery will be disabled", zap.Error(err))
+	}
+
+	// Register status update activities (requires database connection)
+	pgDB, err := postgres.New(cfg.Database)
+	if err != nil {
+		logger.Warn("Failed to connect to database, status activities will not be available", zap.Error(err))
+	} else {
+		testRunRepo := postgres.NewTestRunRepository(pgDB.DB)
+		statusactivities.RegisterActivities(w, testRunRepo, logger)
+		logger.Info("Status activities registered")
+	}
+
 	logger.Info("Registered workflows and activities",
-		zap.Int("activity_count", 6),
-		zap.Int("workflow_count", 1),
+		zap.Int("activity_count", 14), // 6 standard + 3 AI + 5 status
+		zap.Int("workflow_count", 2),  // Standard + AI-enhanced
 	)
 
 	// Start worker in goroutine

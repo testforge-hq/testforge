@@ -1,0 +1,29 @@
+# Kustomization for TestForge K3s Deployment
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: testforge
+
+resources:
+  - 00-namespaces.yaml
+  - 01-postgres.yaml
+  - 02-redis.yaml
+  - 03-minio.yaml
+  - 04-temporal.yaml
+  - 05-testforge-api.yaml
+  - 06-testforge-worker.yaml
+  # - 07-visual-ai.yaml  # Uncomment to enable Visual AI
+  - 08-sandbox-namespace.yaml
+
+commonLabels:
+  app.kubernetes.io/name: testforge
+  app.kubernetes.io/managed-by: kustomize
+
+# Image overrides (uncomment and modify for custom registries)
+# images:
+#   - name: testforge/api
+#     newName: your-registry/testforge-api
+#     newTag: v1.0.0
+#   - name: testforge/worker
+#     newName: your-registry/testforge-worker
+#     newTag: v1.0.0

@@ -16,6 +16,18 @@ const (
 	ExecutionActivityName  = "ExecutionActivity"
 	HealingActivityName    = "HealingActivity"
 	ReportActivityName     = "ReportActivity"
+
+	// AI Agent Activities
+	AIDiscoveryActivityName   = "AIDiscoveryActivity"   // Multi-agent AI-powered discovery
+	PageAnalysisActivityName  = "PageAnalysisActivity"  // Single page semantic analysis
+	ABAActivityName           = "ABAActivity"           // Autonomous Business Analyst
+
+	// Status Update Activities
+	UpdateStatusActivityName       = "UpdateStatusActivity"
+	SaveDiscoveryResultActivityName = "SaveDiscoveryResultActivity"
+	SaveAIAnalysisActivityName     = "SaveAIAnalysisActivity"
+	SaveTestPlanActivityName       = "SaveTestPlanActivity"
+	SaveSummaryActivityName        = "SaveSummaryActivity"
 )
 
 // MasterOrchestrationWorkflow orchestrates the entire test run process
@@ -352,4 +364,262 @@ func calculateSummary(results []TestResult) *RunSummary {
 	}
 
 	return summary
+}
+
+// =============================================================================
+// AI-Powered Activity Execution Functions
+// =============================================================================
+
+// executeAIDiscovery runs the AI-powered discovery activity with multi-agent analysis
+func executeAIDiscovery(ctx workflow.Context, input TestRunInput) (*AIDiscoveryOutput, error) {
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 15 * time.Minute, // AI analysis may take longer
+		HeartbeatTimeout:    30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    time.Minute,
+			MaximumAttempts:    3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	aiDiscoveryInput := AIDiscoveryInput{
+		TestRunID:        input.TestRunID,
+		TargetURL:        input.TargetURL,
+		MaxPages:         50,
+		MaxDepth:         input.MaxCrawlDepth,
+		EnableABA:        true,
+		EnableSemanticAI: true,
+		EnableVisualAI:   input.EnableVisualTesting,
+		Headless:         true,
+	}
+
+	var output AIDiscoveryOutput
+	err := workflow.ExecuteActivity(ctx, AIDiscoveryActivityName, aiDiscoveryInput).Get(ctx, &output)
+	return &output, err
+}
+
+// executePageAnalysis runs semantic analysis on a single page
+func executePageAnalysis(ctx workflow.Context, input TestRunInput, pageURL, html string) (*PageAnalysisOutput, error) {
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 2 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    30 * time.Second,
+			MaximumAttempts:    2,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	pageAnalysisInput := PageAnalysisInput{
+		TestRunID:    input.TestRunID,
+		PageURL:      pageURL,
+		HTML:         html,
+		AnalysisType: "full",
+	}
+
+	var output PageAnalysisOutput
+	err := workflow.ExecuteActivity(ctx, PageAnalysisActivityName, pageAnalysisInput).Get(ctx, &output)
+	return &output, err
+}
+
+// executeABA runs the Autonomous Business Analyst for requirements and user stories
+func executeABA(ctx workflow.Context, input TestRunInput, appModel *AppModel) (*ABAOutput, error) {
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 5 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    30 * time.Second,
+			MaximumAttempts:    2,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	abaInput := ABAInput{
+		TestRunID: input.TestRunID,
+		AppModel:  appModel,
+	}
+
+	var output ABAOutput
+	err := workflow.ExecuteActivity(ctx, ABAActivityName, abaInput).Get(ctx, &output)
+	return &output, err
+}
+
+// AIEnhancedOrchestrationWorkflow is an alternative workflow that uses AI-powered discovery
+func AIEnhancedOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (*TestRunOutput, error) {
+	logger := workflow.GetLogger(ctx)
+	startTime := workflow.Now(ctx)
+
+	logger.Info("Starting AI-enhanced orchestration workflow",
+		"test_run_id", input.TestRunID.String(),
+		"target_url", input.TargetURL,
+	)
+
+	output := &TestRunOutput{
+		TestRunID: input.TestRunID,
+		Status:    "running",
+	}
+
+	// Phase 1: AI-Powered Discovery with multi-agent analysis
+	logger.Info("Phase 1: Starting AI-powered discovery")
+	aiDiscoveryOutput, err := executeAIDiscovery(ctx, input)
+	if err != nil {
+		output.Status = "failed"
+		output.Error = fmt.Sprintf("AI discovery failed: %v", err)
+		output.CompletedAt = workflow.Now(ctx)
+		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		return output, nil
+	}
+	logger.Info("Phase 1: AI discovery completed",
+		"pages_found", aiDiscoveryOutput.PagesFound,
+		"elements_found", aiDiscoveryOutput.ElementsFound,
+		"flows_detected", aiDiscoveryOutput.FlowsDetected,
+		"requirements", len(aiDiscoveryOutput.Requirements),
+		"user_stories", len(aiDiscoveryOutput.UserStories),
+	)
+
+	// Convert AI discovery output to standard discovery output for downstream activities
+	discoveryOutput := &DiscoveryOutput{
+		AppModel:      aiDiscoveryOutput.AppModel,
+		PagesFound:    aiDiscoveryOutput.PagesFound,
+		FormsFound:    0, // Would need to count from app model
+		FlowsDetected: aiDiscoveryOutput.FlowsDetected,
+		Duration:      aiDiscoveryOutput.Duration,
+	}
+
+	// Save AI analysis results to database
+	if len(aiDiscoveryOutput.Requirements) > 0 || len(aiDiscoveryOutput.UserStories) > 0 {
+		saveAIInput := SaveAIAnalysisInput{
+			TestRunID:    input.TestRunID.String(),
+			Requirements: aiDiscoveryOutput.Requirements,
+			UserStories:  aiDiscoveryOutput.UserStories,
+			SemanticMap:  aiDiscoveryOutput.SemanticMap,
+			AgentsUsed:   []string{"PageUnderstanding", "ElementDiscovery", "BusinessFlow", "ABA"},
+			TokensUsed:   aiDiscoveryOutput.TokensUsed,
+			Duration:     aiDiscoveryOutput.Duration,
+		}
+		if err := saveAIAnalysis(ctx, saveAIInput); err != nil {
+			logger.Warn("Failed to save AI analysis results", "error", err)
+		}
+	}
+
+	// Continue with standard workflow phases using the AI-enhanced discovery data
+	// Phase 2: Test Design
+	logger.Info("Phase 2: Starting test design")
+	testDesignOutput, err := executeTestDesign(ctx, input, discoveryOutput)
+	if err != nil {
+		output.Status = "failed"
+		output.Error = fmt.Sprintf("test design failed: %v", err)
+		output.CompletedAt = workflow.Now(ctx)
+		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		return output, nil
+	}
+	logger.Info("Phase 2: Test design completed",
+		"test_cases", testDesignOutput.TestPlan.TotalCount,
+	)
+
+	// Phase 3: Automation
+	logger.Info("Phase 3: Starting automation")
+	automationOutput, err := executeAutomation(ctx, input, testDesignOutput)
+	if err != nil {
+		output.Status = "failed"
+		output.Error = fmt.Sprintf("automation failed: %v", err)
+		output.CompletedAt = workflow.Now(ctx)
+		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		return output, nil
+	}
+	logger.Info("Phase 3: Automation completed",
+		"scripts_generated", len(automationOutput.Scripts),
+	)
+
+	// Phase 4: Execution
+	logger.Info("Phase 4: Starting execution")
+	executionOutput, err := executeTests(ctx, input, automationOutput)
+	if err != nil {
+		output.Status = "failed"
+		output.Error = fmt.Sprintf("execution failed: %v", err)
+		output.CompletedAt = workflow.Now(ctx)
+		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		return output, nil
+	}
+
+	// Phase 5: Self-Healing
+	finalResults := executionOutput.Results
+	if input.EnableSelfHealing && executionOutput.Summary.Failed > 0 {
+		logger.Info("Phase 5: Starting self-healing")
+		healingOutput, err := executeSelfHealing(ctx, input, executionOutput, automationOutput)
+		if err == nil && healingOutput.HealedCount > 0 {
+			finalResults = mergeResults(executionOutput.Results, healingOutput.HealedResults)
+		}
+	}
+
+	finalSummary := calculateSummary(finalResults)
+
+	// Phase 6: Reporting
+	logger.Info("Phase 6: Starting report generation")
+	reportOutput, err := executeReporting(ctx, input, finalResults, finalSummary, discoveryOutput)
+	if err == nil {
+		output.ReportURL = reportOutput.ReportURL
+	}
+
+	// Finalize
+	output.Status = "completed"
+	output.Summary = finalSummary
+	output.CompletedAt = workflow.Now(ctx)
+	output.TotalDuration = output.CompletedAt.Sub(startTime)
+
+	// Save final summary to database
+	saveSummaryInput := SaveSummaryInput{
+		TestRunID: input.TestRunID.String(),
+		Summary:   finalSummary,
+		ReportURL: output.ReportURL,
+		Status:    "completed",
+	}
+	if err := saveSummary(ctx, saveSummaryInput); err != nil {
+		logger.Warn("Failed to save summary", "error", err)
+	}
+
+	logger.Info("AI-enhanced orchestration workflow completed",
+		"test_run_id", input.TestRunID.String(),
+		"status", output.Status,
+		"duration", output.TotalDuration,
+		"pass_rate", finalSummary.PassRate,
+	)
+
+	return output, nil
+}
+
+// saveAIAnalysis saves AI analysis results to the database
+func saveAIAnalysis(ctx workflow.Context, input SaveAIAnalysisInput) error {
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    10 * time.Second,
+			MaximumAttempts:    3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	return workflow.ExecuteActivity(ctx, SaveAIAnalysisActivityName, input).Get(ctx, nil)
+}
+
+// saveSummary saves the final summary to the database
+func saveSummary(ctx workflow.Context, input SaveSummaryInput) error {
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    10 * time.Second,
+			MaximumAttempts:    3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	return workflow.ExecuteActivity(ctx, SaveSummaryActivityName, input).Get(ctx, nil)
 }

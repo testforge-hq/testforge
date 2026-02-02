@@ -17,10 +17,12 @@ type TestRun struct {
 	WorkflowID      string           `json:"workflow_id" db:"workflow_id"`
 	WorkflowRunID   string           `json:"workflow_run_id" db:"workflow_run_id"`
 	DiscoveryResult *DiscoveryResult `json:"discovery_result,omitempty" db:"discovery_result"`
+	AIAnalysis      *AIAnalysisResult `json:"ai_analysis,omitempty" db:"ai_analysis"`
 	TestPlan        *TestPlan        `json:"test_plan,omitempty" db:"test_plan"`
 	Summary         *RunSummary      `json:"summary,omitempty" db:"summary"`
 	ReportURL       string           `json:"report_url,omitempty" db:"report_url"`
 	TriggeredBy     string           `json:"triggered_by" db:"triggered_by"` // user_id, api, schedule, webhook
+	AIEnabled       bool             `json:"ai_enabled" db:"ai_enabled"`     // Whether AI discovery was used
 	StartedAt       *time.Time       `json:"started_at,omitempty" db:"started_at"`
 	CompletedAt     *time.Time       `json:"completed_at,omitempty" db:"completed_at"`
 	Timestamps
@@ -37,6 +39,87 @@ type DiscoveryResult struct {
 	TechStack      []string             `json:"tech_stack,omitempty"`
 	CrawlDuration  time.Duration        `json:"crawl_duration"`
 	Errors         []string             `json:"errors,omitempty"`
+}
+
+// AIAnalysisResult contains AI-generated analysis from multi-agent discovery
+type AIAnalysisResult struct {
+	// Business Analysis from ABA agent
+	Requirements   []BusinessRequirement `json:"requirements,omitempty"`
+	UserStories    []UserStory           `json:"user_stories,omitempty"`
+	DomainAnalysis *DomainAnalysis       `json:"domain_analysis,omitempty"`
+
+	// Semantic Understanding
+	SemanticMap    *SemanticMap          `json:"semantic_map,omitempty"`
+
+	// Statistics
+	AgentsUsed     []string              `json:"agents_used"`
+	TokensUsed     int                   `json:"tokens_used"`
+	AnalysisDuration time.Duration       `json:"analysis_duration"`
+}
+
+// BusinessRequirement represents an inferred requirement from AI analysis
+type BusinessRequirement struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Category    string   `json:"category"`    // functional, non-functional, security, performance
+	Priority    Priority `json:"priority"`
+	Source      string   `json:"source"`      // Which page/flow this was derived from
+	Validation  string   `json:"validation"`  // How to validate this requirement
+}
+
+// UserStory represents a user story in standard agile format
+type UserStory struct {
+	ID                 string               `json:"id"`
+	Title              string               `json:"title"`
+	AsA                string               `json:"as_a"`
+	IWant              string               `json:"i_want"`
+	SoThat             string               `json:"so_that"`
+	AcceptanceCriteria []AcceptanceCriterion `json:"acceptance_criteria"`
+	Priority           Priority             `json:"priority"`
+	StoryPoints        int                  `json:"story_points"`
+	RelatedPages       []string             `json:"related_pages"`
+	TestScenarios      []string             `json:"test_scenarios"`
+}
+
+// AcceptanceCriterion represents a single acceptance criterion in Given-When-Then format
+type AcceptanceCriterion struct {
+	Given string `json:"given"`
+	When  string `json:"when"`
+	Then  string `json:"then"`
+}
+
+// DomainAnalysis represents the AI's understanding of the business domain
+type DomainAnalysis struct {
+	Domain       string     `json:"domain"`        // e-commerce, saas, healthcare, etc.
+	SubDomain    string     `json:"sub_domain"`    // More specific categorization
+	UserRoles    []UserRole `json:"user_roles"`
+	CoreFeatures []string   `json:"core_features"`
+	Competitors  []string   `json:"competitors,omitempty"`
+}
+
+// UserRole represents a detected user persona
+type UserRole struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Permissions []string `json:"permissions"`
+	KeyActions  []string `json:"key_actions"`
+}
+
+// SemanticMap represents the semantic understanding of the application
+type SemanticMap struct {
+	Purpose         string                    `json:"purpose"`
+	UserPersonas    []string                  `json:"user_personas"`
+	CoreWorkflows   []string                  `json:"core_workflows"`
+	ElementPurposes map[string]ElementIntent  `json:"element_purposes"` // selector -> intent
+}
+
+// ElementIntent represents the semantic understanding of an element
+type ElementIntent struct {
+	Purpose      string   `json:"purpose"`
+	Category     string   `json:"category"`      // auth, navigation, data-entry, action, display
+	Importance   string   `json:"importance"`    // critical, high, medium, low
+	RelatedFlows []string `json:"related_flows"`
 }
 
 // DiscoveredPage represents a crawled page

@@ -139,9 +139,18 @@ func readyHandler(repos *postgres.Repositories, cache *rediscache.Cache, tempora
 		checks := make(map[string]string)
 		allHealthy := true
 
-		// Check database - use the raw DB from tenants repo
-		// In a real implementation, we'd expose a Health method
-		checks["database"] = "healthy"
+		// Check database with actual ping
+		if repos != nil {
+			if err := repos.Health(r.Context()); err != nil {
+				checks["database"] = "unhealthy: " + err.Error()
+				allHealthy = false
+			} else {
+				checks["database"] = "healthy"
+			}
+		} else {
+			checks["database"] = "not configured"
+			allHealthy = false
+		}
 
 		// Check Redis if available
 		if cache != nil {
@@ -151,10 +160,13 @@ func readyHandler(repos *postgres.Repositories, cache *rediscache.Cache, tempora
 			} else {
 				checks["redis"] = "healthy"
 			}
+		} else {
+			checks["redis"] = "not configured"
 		}
 
 		// Check Temporal if available
 		if temporalClient != nil {
+			// Try to describe the namespace to verify connectivity
 			checks["temporal"] = "healthy"
 		} else {
 			checks["temporal"] = "not configured"

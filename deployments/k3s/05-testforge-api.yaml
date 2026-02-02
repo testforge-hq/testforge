@@ -1,0 +1,168 @@
+# TestForge API Deployment
+# Main REST API server
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: testforge-secrets
+  namespace: testforge
+type: Opaque
+stringData:
+  # Database
+  DB_HOST: postgres.testforge-data.svc.cluster.local
+  DB_PORT: "5432"
+  DB_USER: testforge
+  DB_PASSWORD: testforge-secret-password
+  DB_NAME: testforge
+  # Redis
+  REDIS_HOST: redis.testforge-data.svc.cluster.local
+  REDIS_PORT: "6379"
+  # Temporal
+  TEMPORAL_HOST: temporal.testforge-temporal.svc.cluster.local
+  TEMPORAL_PORT: "7233"
+  # S3/MinIO
+  S3_ENDPOINT: minio.testforge-data.svc.cluster.local:9000
+  S3_ACCESS_KEY: minioadmin
+  S3_SECRET_KEY: minioadmin-secret-password
+  S3_BUCKET: testforge
+  S3_USE_SSL: "false"
+  # Claude AI - REPLACE WITH REAL KEY
+  ANTHROPIC_API_KEY: "sk-ant-your-key-here"
+  # Encryption key - REPLACE WITH REAL KEY (32 bytes base64)
+  ENCRYPTION_KEY: "dGVzdGZvcmdlLWVuY3J5cHRpb24ta2V5LTMyYg=="
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testforge-config
+  namespace: testforge
+data:
+  APP_NAME: testforge
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_VERSION: "0.1.0"
+  LOG_LEVEL: info
+  SERVER_HOST: "0.0.0.0"
+  SERVER_PORT: "8080"
+  TEMPORAL_NAMESPACE: testforge
+  TEMPORAL_TASK_QUEUE: testforge-tasks
+  TEMPORAL_WORKER_COUNT: "4"
+  CLAUDE_MODEL: claude-sonnet-4-20250514
+  CLAUDE_MAX_TOKENS: "4096"
+  K8S_IN_CLUSTER: "true"
+  K8S_NAMESPACE: testforge-sandbox
+  K8S_SANDBOX_IMAGE: testforge/playwright-sandbox:latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testforge-api
+  namespace: testforge
+  labels:
+    app: testforge-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: testforge-api
+  template:
+    metadata:
+      labels:
+        app: testforge-api
+    spec:
+      serviceAccountName: testforge-api
+      initContainers:
+        - name: wait-for-deps
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z postgres.testforge-data.svc.cluster.local 5432; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              until nc -z redis.testforge-data.svc.cluster.local 6379; do
+                echo "Waiting for Redis..."
+                sleep 2
+              done
+              until nc -z temporal.testforge-temporal.svc.cluster.local 7233; do
+                echo "Waiting for Temporal..."
+                sleep 2
+              done
+              echo "All dependencies ready"
+      containers:
+        - name: api
+          image: testforge/api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: testforge-secrets
+            - configMapRef:
+                name: testforge-config
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testforge-api
+  namespace: testforge
+spec:
+  selector:
+    app: testforge-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
+---
+# Service account for API to manage sandbox pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: testforge-api
+  namespace: testforge
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: testforge-sandbox-manager
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/exec"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: testforge-api-sandbox-manager
+subjects:
+  - kind: ServiceAccount
+    name: testforge-api
+    namespace: testforge
+roleRef:
+  kind: ClusterRole
+  name: testforge-sandbox-manager
+  apiGroup: rbac.authorization.k8s.io

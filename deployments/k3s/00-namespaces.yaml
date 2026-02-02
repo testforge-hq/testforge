@@ -1,0 +1,34 @@
+# TestForge K3s Namespaces
+# Creates isolated namespaces for different components
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: testforge
+  labels:
+    app.kubernetes.io/name: testforge
+    app.kubernetes.io/component: api
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: testforge-temporal
+  labels:
+    app.kubernetes.io/name: testforge
+    app.kubernetes.io/component: temporal
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: testforge-data
+  labels:
+    app.kubernetes.io/name: testforge
+    app.kubernetes.io/component: data
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: testforge-sandbox
+  labels:
+    app.kubernetes.io/name: testforge
+    app.kubernetes.io/component: sandbox

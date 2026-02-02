@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,16 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"testforge/internal/resilience"
+)
+
+var (
+	// ErrServiceUnavailable is returned when the Claude API is unavailable
+	ErrServiceUnavailable = errors.New("claude API is temporarily unavailable")
+
+	// ErrCircuitOpen is returned when the circuit breaker is open
+	ErrCircuitOpen = errors.New("circuit breaker is open - too many recent failures")
 )
 
 // ClaudeClient provides access to Claude API with enterprise features
@@ -29,6 +40,9 @@ type ClaudeClient struct {
 	// Rate limiting
 	rateLimiter *rate.Limiter
 
+	// Circuit breaker for resilience
+	circuitBreaker *resilience.CircuitBreaker
+
 	// Caching with LRU eviction
 	cache    *LRUCache
 	cacheTTL time.Duration
@@ -36,6 +50,9 @@ type ClaudeClient struct {
 	// Metrics
 	metrics *Metrics
 	mu      sync.RWMutex
+
+	// Fallback behavior
+	fallbackEnabled bool
 }
 
 // Config for Claude client
@@ -49,33 +66,49 @@ type Config struct {
 	CacheTTL     time.Duration
 	CacheSize    int           // Max cache entries
 	MaxRetries   int
+
+	// Circuit breaker settings
+	CircuitBreakerEnabled  bool          // Enable circuit breaker (default: true)
+	CircuitBreakerTimeout  time.Duration // Time before trying again after circuit opens
+	CircuitBreakerInterval time.Duration // Interval for clearing failure counts in closed state
+	CircuitBreakerMinReqs  int           // Minimum requests before tripping
+
+	// Fallback settings
+	FallbackEnabled bool // Return cached response on circuit open
 }
 
 // DefaultConfig returns default configuration
 func DefaultConfig() Config {
 	return Config{
-		BaseURL:      "https://api.anthropic.com",
-		Model:        "claude-sonnet-4-20250514",
-		MaxTokens:    8192,
-		Timeout:      120 * time.Second,
-		RateLimitRPM: 50,
-		CacheTTL:     24 * time.Hour,
-		CacheSize:    1000,
-		MaxRetries:   3,
+		BaseURL:                "https://api.anthropic.com",
+		Model:                  "claude-sonnet-4-20250514",
+		MaxTokens:              8192,
+		Timeout:                120 * time.Second,
+		RateLimitRPM:           50,
+		CacheTTL:               24 * time.Hour,
+		CacheSize:              1000,
+		MaxRetries:             3,
+		CircuitBreakerEnabled:  true,
+		CircuitBreakerTimeout:  30 * time.Second,
+		CircuitBreakerInterval: 60 * time.Second,
+		CircuitBreakerMinReqs:  5,
+		FallbackEnabled:        true,
 	}
 }
 
 // Metrics tracks API usage
 type Metrics struct {
-	TotalRequests   int64
-	SuccessRequests int64
-	FailedRequests  int64
-	TotalTokensIn   int64
-	TotalTokensOut  int64
-	TotalCost       float64
-	TotalLatencyMs  int64
-	CacheHits       int64
-	CacheMisses     int64
+	TotalRequests    int64
+	SuccessRequests  int64
+	FailedRequests   int64
+	TotalTokensIn    int64
+	TotalTokensOut   int64
+	TotalCost        float64
+	TotalLatencyMs   int64
+	CacheHits        int64
+	CacheMisses      int64
+	CircuitBreaks    int64
+	FallbacksUsed    int64
 }
 
 // LRUCache implements a thread-safe LRU cache with TTL
@@ -212,22 +245,62 @@ func NewClaudeClient(cfg Config) (*ClaudeClient, error) {
 	if cfg.CacheSize == 0 {
 		cfg.CacheSize = defaults.CacheSize
 	}
+	if cfg.CircuitBreakerTimeout == 0 {
+		cfg.CircuitBreakerTimeout = defaults.CircuitBreakerTimeout
+	}
+	if cfg.CircuitBreakerInterval == 0 {
+		cfg.CircuitBreakerInterval = defaults.CircuitBreakerInterval
+	}
+	if cfg.CircuitBreakerMinReqs == 0 {
+		cfg.CircuitBreakerMinReqs = defaults.CircuitBreakerMinReqs
+	}
 
 	// Create rate limiter with burst capacity
 	// RPM/60 = requests per second, burst of 5 for handling spikes
 	limiter := rate.NewLimiter(rate.Limit(float64(cfg.RateLimitRPM)/60.0), 5)
 
-	return &ClaudeClient{
-		apiKey:      cfg.APIKey,
-		baseURL:     cfg.BaseURL,
-		model:       cfg.Model,
-		maxTokens:   cfg.MaxTokens,
-		httpClient:  &http.Client{Timeout: cfg.Timeout},
-		rateLimiter: limiter,
-		cache:       NewLRUCache(cfg.CacheSize, cfg.CacheTTL),
-		cacheTTL:    cfg.CacheTTL,
-		metrics:     &Metrics{},
-	}, nil
+	client := &ClaudeClient{
+		apiKey:          cfg.APIKey,
+		baseURL:         cfg.BaseURL,
+		model:           cfg.Model,
+		maxTokens:       cfg.MaxTokens,
+		httpClient:      &http.Client{Timeout: cfg.Timeout},
+		rateLimiter:     limiter,
+		cache:           NewLRUCache(cfg.CacheSize, cfg.CacheTTL),
+		cacheTTL:        cfg.CacheTTL,
+		metrics:         &Metrics{},
+		fallbackEnabled: cfg.FallbackEnabled,
+	}
+
+	// Configure circuit breaker
+	if cfg.CircuitBreakerEnabled {
+		minReqs := uint32(cfg.CircuitBreakerMinReqs)
+		cbConfig := resilience.CircuitBreakerConfig{
+			Name:        "claude-api",
+			MaxRequests: 3, // Allow 3 requests in half-open state
+			Interval:    cfg.CircuitBreakerInterval,
+			Timeout:     cfg.CircuitBreakerTimeout,
+			ReadyToTrip: func(counts resilience.Counts) bool {
+				// Trip if failure rate exceeds 60% with at least minReqs requests
+				if counts.Requests < minReqs {
+					return false
+				}
+				failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+				return failureRatio >= 0.6
+			},
+			OnStateChange: func(name string, from, to resilience.CircuitBreakerState) {
+				// Log state changes (metrics tracking)
+				atomic.AddInt64(&client.metrics.CircuitBreaks, 1)
+			},
+			IsSuccessful: func(err error) bool {
+				// Consider rate limit errors as failures that should trip the breaker
+				return err == nil
+			},
+		}
+		client.circuitBreaker = resilience.NewCircuitBreaker(cbConfig)
+	}
+
+	return client, nil
 }
 
 // Request represents a Claude API request
@@ -288,6 +361,22 @@ func (c *ClaudeClient) CompleteWithOptions(ctx context.Context, systemPrompt, us
 	}
 	atomic.AddInt64(&c.metrics.CacheMisses, 1)
 
+	// Check circuit breaker before making request
+	if c.circuitBreaker != nil {
+		state := c.circuitBreaker.State()
+		if state == resilience.StateOpen {
+			// Try fallback if enabled
+			if c.fallbackEnabled {
+				if cached, ok := c.cache.Get(cacheKey); ok {
+					atomic.AddInt64(&c.metrics.FallbacksUsed, 1)
+					return string(cached), nil, nil
+				}
+			}
+			atomic.AddInt64(&c.metrics.FailedRequests, 1)
+			return "", nil, ErrCircuitOpen
+		}
+	}
+
 	// Rate limiting with context
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		atomic.AddInt64(&c.metrics.FailedRequests, 1)
@@ -307,10 +396,44 @@ func (c *ClaudeClient) CompleteWithOptions(ctx context.Context, systemPrompt, us
 		Temperature: temperature,
 	}
 
-	// Make request with context
-	resp, err := c.doRequest(ctx, req)
+	// Make request with circuit breaker if enabled
+	var resp *Response
+	var err error
+
+	if c.circuitBreaker != nil {
+		result, cbErr := c.circuitBreaker.ExecuteWithContext(ctx, func(ctx context.Context) (interface{}, error) {
+			return c.doRequest(ctx, req)
+		})
+		if cbErr != nil {
+			// Check if it's a circuit breaker error
+			if errors.Is(cbErr, resilience.ErrCircuitOpen) || errors.Is(cbErr, resilience.ErrTooManyRequests) {
+				// Try fallback
+				if c.fallbackEnabled {
+					if cached, ok := c.cache.Get(cacheKey); ok {
+						atomic.AddInt64(&c.metrics.FallbacksUsed, 1)
+						return string(cached), nil, nil
+					}
+				}
+				atomic.AddInt64(&c.metrics.FailedRequests, 1)
+				return "", nil, ErrCircuitOpen
+			}
+			err = cbErr
+		} else if result != nil {
+			resp = result.(*Response)
+		}
+	} else {
+		resp, err = c.doRequest(ctx, req)
+	}
+
 	if err != nil {
 		atomic.AddInt64(&c.metrics.FailedRequests, 1)
+		// Try fallback on error if enabled
+		if c.fallbackEnabled {
+			if cached, ok := c.cache.Get(cacheKey); ok {
+				atomic.AddInt64(&c.metrics.FallbacksUsed, 1)
+				return string(cached), nil, nil
+			}
+		}
 		return "", nil, err
 	}
 
@@ -453,16 +576,34 @@ func (c *ClaudeClient) GetMetrics() Metrics {
 	defer c.mu.RUnlock()
 
 	return Metrics{
-		TotalRequests:   atomic.LoadInt64(&c.metrics.TotalRequests),
-		SuccessRequests: atomic.LoadInt64(&c.metrics.SuccessRequests),
-		FailedRequests:  atomic.LoadInt64(&c.metrics.FailedRequests),
-		TotalTokensIn:   atomic.LoadInt64(&c.metrics.TotalTokensIn),
-		TotalTokensOut:  atomic.LoadInt64(&c.metrics.TotalTokensOut),
-		TotalCost:       c.metrics.TotalCost,
-		TotalLatencyMs:  atomic.LoadInt64(&c.metrics.TotalLatencyMs),
-		CacheHits:       atomic.LoadInt64(&c.metrics.CacheHits),
-		CacheMisses:     atomic.LoadInt64(&c.metrics.CacheMisses),
+		TotalRequests:    atomic.LoadInt64(&c.metrics.TotalRequests),
+		SuccessRequests:  atomic.LoadInt64(&c.metrics.SuccessRequests),
+		FailedRequests:   atomic.LoadInt64(&c.metrics.FailedRequests),
+		TotalTokensIn:    atomic.LoadInt64(&c.metrics.TotalTokensIn),
+		TotalTokensOut:   atomic.LoadInt64(&c.metrics.TotalTokensOut),
+		TotalCost:        c.metrics.TotalCost,
+		TotalLatencyMs:   atomic.LoadInt64(&c.metrics.TotalLatencyMs),
+		CacheHits:        atomic.LoadInt64(&c.metrics.CacheHits),
+		CacheMisses:      atomic.LoadInt64(&c.metrics.CacheMisses),
+		CircuitBreaks:    atomic.LoadInt64(&c.metrics.CircuitBreaks),
+		FallbacksUsed:    atomic.LoadInt64(&c.metrics.FallbacksUsed),
 	}
+}
+
+// GetCircuitBreakerState returns the current circuit breaker state
+func (c *ClaudeClient) GetCircuitBreakerState() string {
+	if c.circuitBreaker == nil {
+		return "disabled"
+	}
+	return c.circuitBreaker.State().String()
+}
+
+// IsHealthy returns true if the client can accept requests
+func (c *ClaudeClient) IsHealthy() bool {
+	if c.circuitBreaker == nil {
+		return true
+	}
+	return c.circuitBreaker.State() != resilience.StateOpen
 }
 
 // GetModel returns the model being used
