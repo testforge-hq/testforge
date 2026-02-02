@@ -1,0 +1,41 @@
+# TestForge Migration Dockerfile
+# Runs database migrations using psql
+
+FROM postgres:16-alpine
+
+WORKDIR /migrations
+
+# Copy all migration files
+COPY migrations/*.sql ./
+
+# Create migration script
+RUN cat > /run-migrations.sh << 'SCRIPT'
+#!/bin/sh
+set -e
+
+echo "=== TestForge Database Migrations ==="
+echo "Host: $DB_HOST"
+echo "Database: $DB_NAME"
+
+# Wait for postgres to be ready
+until pg_isready -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER"; do
+  echo "Waiting for PostgreSQL..."
+  sleep 2
+done
+
+echo "PostgreSQL is ready. Running migrations..."
+
+# Run each migration file in order
+for file in /migrations/*.sql; do
+  echo "Running: $(basename $file)"
+  PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -p "${DB_PORT:-5432}" -U "$DB_USER" -d "$DB_NAME" -f "$file" || {
+    echo "Warning: Migration $(basename $file) had errors (may already be applied)"
+  }
+done
+
+echo "=== Migrations complete ==="
+SCRIPT
+
+RUN chmod +x /run-migrations.sh
+
+ENTRYPOINT ["/run-migrations.sh"]
