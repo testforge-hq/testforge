@@ -88,10 +88,18 @@ type SaveAIAnalysisInput struct {
 // SaveAIAnalysis saves AI analysis results to the test run
 func (a *Activity) SaveAIAnalysis(ctx context.Context, input SaveAIAnalysisInput) error {
 	logger := activity.GetLogger(ctx)
+
+	// Handle nil AIAnalysis
+	reqCount, storyCount := 0, 0
+	if input.AIAnalysis != nil {
+		reqCount = len(input.AIAnalysis.Requirements)
+		storyCount = len(input.AIAnalysis.UserStories)
+	}
+
 	logger.Info("Saving AI analysis result",
 		"test_run_id", input.TestRunID,
-		"requirements", len(input.AIAnalysis.Requirements),
-		"user_stories", len(input.AIAnalysis.UserStories),
+		"requirements", reqCount,
+		"user_stories", storyCount,
 	)
 
 	id, err := uuid.Parse(input.TestRunID)

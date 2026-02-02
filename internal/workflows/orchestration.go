@@ -47,12 +47,16 @@ func MasterOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (*Tes
 
 	// Phase 1: Discovery
 	logger.Info("Phase 1: Starting discovery")
+	if err := updateStatus(ctx, input.TestRunID.String(), "discovering", "Starting discovery phase"); err != nil {
+		logger.Warn("Failed to update status to discovering", "error", err)
+	}
 	discoveryOutput, err := executeDiscovery(ctx, input)
 	if err != nil {
 		output.Status = "failed"
 		output.Error = fmt.Sprintf("discovery failed: %v", err)
 		output.CompletedAt = workflow.Now(ctx)
 		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		_ = updateStatus(ctx, input.TestRunID.String(), "failed", output.Error)
 		return output, nil // Return output even on failure for visibility
 	}
 	logger.Info("Phase 1: Discovery completed",
@@ -62,12 +66,16 @@ func MasterOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (*Tes
 
 	// Phase 2: Test Design
 	logger.Info("Phase 2: Starting test design")
+	if err := updateStatus(ctx, input.TestRunID.String(), "designing", "Starting test design phase"); err != nil {
+		logger.Warn("Failed to update status to designing", "error", err)
+	}
 	testDesignOutput, err := executeTestDesign(ctx, input, discoveryOutput)
 	if err != nil {
 		output.Status = "failed"
 		output.Error = fmt.Sprintf("test design failed: %v", err)
 		output.CompletedAt = workflow.Now(ctx)
 		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		_ = updateStatus(ctx, input.TestRunID.String(), "failed", output.Error)
 		return output, nil
 	}
 	logger.Info("Phase 2: Test design completed",
@@ -76,12 +84,16 @@ func MasterOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (*Tes
 
 	// Phase 3: Automation (Script Generation)
 	logger.Info("Phase 3: Starting automation")
+	if err := updateStatus(ctx, input.TestRunID.String(), "automating", "Starting script generation phase"); err != nil {
+		logger.Warn("Failed to update status to automating", "error", err)
+	}
 	automationOutput, err := executeAutomation(ctx, input, testDesignOutput)
 	if err != nil {
 		output.Status = "failed"
 		output.Error = fmt.Sprintf("automation failed: %v", err)
 		output.CompletedAt = workflow.Now(ctx)
 		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		_ = updateStatus(ctx, input.TestRunID.String(), "failed", output.Error)
 		return output, nil
 	}
 	logger.Info("Phase 3: Automation completed",
@@ -90,12 +102,16 @@ func MasterOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (*Tes
 
 	// Phase 4: Execution (as child workflow for parallel execution)
 	logger.Info("Phase 4: Starting execution")
+	if err := updateStatus(ctx, input.TestRunID.String(), "executing", "Starting test execution phase"); err != nil {
+		logger.Warn("Failed to update status to executing", "error", err)
+	}
 	executionOutput, err := executeTests(ctx, input, automationOutput)
 	if err != nil {
 		output.Status = "failed"
 		output.Error = fmt.Sprintf("execution failed: %v", err)
 		output.CompletedAt = workflow.Now(ctx)
 		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		_ = updateStatus(ctx, input.TestRunID.String(), "failed", output.Error)
 		return output, nil
 	}
 	logger.Info("Phase 4: Execution completed",
@@ -110,6 +126,9 @@ func MasterOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (*Tes
 		logger.Info("Phase 5: Starting self-healing",
 			"failed_tests", executionOutput.Summary.Failed,
 		)
+		if err := updateStatus(ctx, input.TestRunID.String(), "healing", "Starting self-healing phase"); err != nil {
+			logger.Warn("Failed to update status to healing", "error", err)
+		}
 		healingOutput, err := executeSelfHealing(ctx, input, executionOutput, automationOutput)
 		if err != nil {
 			logger.Warn("Self-healing failed, continuing with original results", "error", err)
@@ -132,6 +151,9 @@ func MasterOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (*Tes
 
 	// Phase 6: Reporting
 	logger.Info("Phase 6: Starting report generation")
+	if err := updateStatus(ctx, input.TestRunID.String(), "reporting", "Starting report generation phase"); err != nil {
+		logger.Warn("Failed to update status to reporting", "error", err)
+	}
 	reportOutput, err := executeReporting(ctx, input, finalResults, finalSummary, discoveryOutput)
 	if err != nil {
 		logger.Warn("Report generation failed", "error", err)
@@ -146,6 +168,17 @@ func MasterOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (*Tes
 	output.Summary = finalSummary
 	output.CompletedAt = workflow.Now(ctx)
 	output.TotalDuration = output.CompletedAt.Sub(startTime)
+
+	// Save final summary to database
+	saveSummaryInput := SaveSummaryInput{
+		TestRunID: input.TestRunID.String(),
+		Summary:   finalSummary,
+		ReportURL: output.ReportURL,
+		Status:    "completed",
+	}
+	if err := saveSummary(ctx, saveSummaryInput); err != nil {
+		logger.Warn("Failed to save summary", "error", err)
+	}
 
 	logger.Info("Master orchestration workflow completed",
 		"test_run_id", input.TestRunID.String(),
@@ -465,12 +498,16 @@ func AIEnhancedOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (
 
 	// Phase 1: AI-Powered Discovery with multi-agent analysis
 	logger.Info("Phase 1: Starting AI-powered discovery")
+	if err := updateStatus(ctx, input.TestRunID.String(), "discovering", "Starting AI-powered discovery phase"); err != nil {
+		logger.Warn("Failed to update status to discovering", "error", err)
+	}
 	aiDiscoveryOutput, err := executeAIDiscovery(ctx, input)
 	if err != nil {
 		output.Status = "failed"
 		output.Error = fmt.Sprintf("AI discovery failed: %v", err)
 		output.CompletedAt = workflow.Now(ctx)
 		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		_ = updateStatus(ctx, input.TestRunID.String(), "failed", output.Error)
 		return output, nil
 	}
 	logger.Info("Phase 1: AI discovery completed",
@@ -509,12 +546,16 @@ func AIEnhancedOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (
 	// Continue with standard workflow phases using the AI-enhanced discovery data
 	// Phase 2: Test Design
 	logger.Info("Phase 2: Starting test design")
+	if err := updateStatus(ctx, input.TestRunID.String(), "designing", "Starting test design phase"); err != nil {
+		logger.Warn("Failed to update status to designing", "error", err)
+	}
 	testDesignOutput, err := executeTestDesign(ctx, input, discoveryOutput)
 	if err != nil {
 		output.Status = "failed"
 		output.Error = fmt.Sprintf("test design failed: %v", err)
 		output.CompletedAt = workflow.Now(ctx)
 		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		_ = updateStatus(ctx, input.TestRunID.String(), "failed", output.Error)
 		return output, nil
 	}
 	logger.Info("Phase 2: Test design completed",
@@ -523,12 +564,16 @@ func AIEnhancedOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (
 
 	// Phase 3: Automation
 	logger.Info("Phase 3: Starting automation")
+	if err := updateStatus(ctx, input.TestRunID.String(), "automating", "Starting script generation phase"); err != nil {
+		logger.Warn("Failed to update status to automating", "error", err)
+	}
 	automationOutput, err := executeAutomation(ctx, input, testDesignOutput)
 	if err != nil {
 		output.Status = "failed"
 		output.Error = fmt.Sprintf("automation failed: %v", err)
 		output.CompletedAt = workflow.Now(ctx)
 		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		_ = updateStatus(ctx, input.TestRunID.String(), "failed", output.Error)
 		return output, nil
 	}
 	logger.Info("Phase 3: Automation completed",
@@ -537,12 +582,16 @@ func AIEnhancedOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (
 
 	// Phase 4: Execution
 	logger.Info("Phase 4: Starting execution")
+	if err := updateStatus(ctx, input.TestRunID.String(), "executing", "Starting test execution phase"); err != nil {
+		logger.Warn("Failed to update status to executing", "error", err)
+	}
 	executionOutput, err := executeTests(ctx, input, automationOutput)
 	if err != nil {
 		output.Status = "failed"
 		output.Error = fmt.Sprintf("execution failed: %v", err)
 		output.CompletedAt = workflow.Now(ctx)
 		output.TotalDuration = output.CompletedAt.Sub(startTime)
+		_ = updateStatus(ctx, input.TestRunID.String(), "failed", output.Error)
 		return output, nil
 	}
 
@@ -550,6 +599,9 @@ func AIEnhancedOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (
 	finalResults := executionOutput.Results
 	if input.EnableSelfHealing && executionOutput.Summary.Failed > 0 {
 		logger.Info("Phase 5: Starting self-healing")
+		if err := updateStatus(ctx, input.TestRunID.String(), "healing", "Starting self-healing phase"); err != nil {
+			logger.Warn("Failed to update status to healing", "error", err)
+		}
 		healingOutput, err := executeSelfHealing(ctx, input, executionOutput, automationOutput)
 		if err == nil && healingOutput.HealedCount > 0 {
 			finalResults = mergeResults(executionOutput.Results, healingOutput.HealedResults)
@@ -560,6 +612,9 @@ func AIEnhancedOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (
 
 	// Phase 6: Reporting
 	logger.Info("Phase 6: Starting report generation")
+	if err := updateStatus(ctx, input.TestRunID.String(), "reporting", "Starting report generation phase"); err != nil {
+		logger.Warn("Failed to update status to reporting", "error", err)
+	}
 	reportOutput, err := executeReporting(ctx, input, finalResults, finalSummary, discoveryOutput)
 	if err == nil {
 		output.ReportURL = reportOutput.ReportURL
@@ -590,6 +645,27 @@ func AIEnhancedOrchestrationWorkflow(ctx workflow.Context, input TestRunInput) (
 	)
 
 	return output, nil
+}
+
+// updateStatus updates the test run status in the database
+func updateStatus(ctx workflow.Context, testRunID, status, message string) error {
+	activityOptions := workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    10 * time.Second,
+			MaximumAttempts:    3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityOptions)
+
+	input := StatusUpdateInput{
+		TestRunID: testRunID,
+		Status:    status,
+		Message:   message,
+	}
+	return workflow.ExecuteActivity(ctx, UpdateStatusActivityName, input).Get(ctx, nil)
 }
 
 // saveAIAnalysis saves AI analysis results to the database

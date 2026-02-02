@@ -199,15 +199,16 @@ DECLARE
     v_status VARCHAR(20);
     v_pass_rate FLOAT;
 BEGIN
-    -- Get latest run stats
+    -- Get latest run stats from JSONB summary column
     SELECT
-        COALESCE(SUM(total_tests), 0),
-        COALESCE(SUM(passed_tests), 0)
+        COALESCE(SUM((summary->>'total_tests')::INT), 0),
+        COALESCE(SUM((summary->>'passed')::INT), 0)
     INTO v_total, v_passed
     FROM test_runs
     WHERE project_id = p_project_id
       AND status = 'completed'
-      AND ended_at > NOW() - INTERVAL '30 days';
+      AND completed_at > NOW() - INTERVAL '30 days'
+      AND summary IS NOT NULL;
 
     -- Calculate pass rate
     IF v_total > 0 THEN

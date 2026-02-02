@@ -1,17 +1,22 @@
 # TestForge Worker Dockerfile
-# Multi-stage build for small, secure image
+# Multi-stage build with Playwright support
 
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.24-bookworm AS builder
 
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache git ca-certificates tzdata
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy go mod files first for caching
 COPY go.mod go.sum ./
 RUN go mod download
+
+# Install playwright-go driver (must match version in go.mod)
+RUN go run github.com/playwright-community/playwright-go/cmd/playwright@v0.5200.1 install --with-deps chromium
 
 # Copy source code
 COPY . .
@@ -22,27 +27,37 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o /app/bin/worker \
     ./cmd/worker
 
-# Runtime stage
-FROM alpine:3.19
+# Runtime stage - use debian for glibc compatibility
+FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata curl
+# Install runtime dependencies for Playwright
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata curl procps \
+    # Playwright browser dependencies
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+    libgbm1 libasound2 libpango-1.0-0 libcairo2 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN addgroup -g 1000 testforge && \
-    adduser -u 1000 -G testforge -s /bin/sh -D testforge
+RUN groupadd -g 1000 testforge && \
+    useradd -u 1000 -g testforge -s /bin/bash -m testforge
 
 # Copy binary from builder
 COPY --from=builder /app/bin/worker /app/worker
 
+# Copy playwright driver and browsers from builder
+COPY --from=builder /root/.cache/ms-playwright-go /home/testforge/.cache/ms-playwright-go
+COPY --from=builder /root/.cache/ms-playwright /home/testforge/.cache/ms-playwright
+
 # Set ownership
-RUN chown -R testforge:testforge /app
+RUN chown -R testforge:testforge /app /home/testforge/.cache
 
 USER testforge
 
-# Health check endpoint (workers don't have HTTP, use process check)
+# Health check (workers don't have HTTP, use process check)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD pgrep -x worker || exit 1
 
