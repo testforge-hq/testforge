@@ -1,0 +1,1415 @@
+openapi: 3.1.0
+info:
+  title: TestForge API
+  description: |
+    TestForge is an AI-powered test automation platform that automatically discovers,
+    designs, generates, and executes end-to-end tests for web applications.
+
+    ## Features
+    - **Intelligent Discovery**: Automatically crawls and understands your web application
+    - **AI Test Design**: Uses Claude AI to generate comprehensive test cases
+    - **Script Generation**: Produces production-ready Playwright test scripts
+    - **Self-Healing**: Automatically repairs broken tests using AI
+    - **Visual Testing**: AI-powered visual regression detection
+
+    ## Authentication
+    All API endpoints (except health checks) require authentication via:
+    - `Authorization: Bearer <token>` header, or
+    - `X-API-Key: <api-key>` header
+
+    Additionally, requests require a tenant context via:
+    - `X-Tenant-ID: <tenant-uuid>` header
+
+    ## Rate Limiting
+    API requests are rate limited to 300 requests per minute per tenant.
+    Rate limit headers are included in responses:
+    - `X-RateLimit-Limit`: Maximum requests per window
+    - `X-RateLimit-Remaining`: Remaining requests in current window
+  version: 1.0.0
+  contact:
+    name: TestForge Support
+    email: support@testforge.io
+    url: https://testforge.io
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+  - url: https://api.testforge.io/api/v1
+    description: Production server
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Tenants
+    description: Tenant management operations
+  - name: Projects
+    description: Project management operations
+  - name: Test Runs
+    description: Test run management and execution
+
+paths:
+  /health:
+    get:
+      summary: Basic health check
+      description: Returns basic health status. No authentication required.
+      operationId: healthCheck
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /ready:
+    get:
+      summary: Readiness check
+      description: Returns detailed health status including all dependencies. No authentication required.
+      operationId: readinessCheck
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  /tenants:
+    get:
+      summary: List all tenants
+      description: Returns a paginated list of all tenants the authenticated user has access to.
+      operationId: listTenants
+      tags:
+        - Tenants
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tenant'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      summary: Create a new tenant
+      description: Creates a new tenant organization.
+      operationId: createTenant
+      tags:
+        - Tenants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRequest'
+      responses:
+        '201':
+          description: Tenant created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tenants/{id}:
+    get:
+      summary: Get tenant by ID
+      description: Returns a single tenant by its UUID.
+      operationId: getTenant
+      tags:
+        - Tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      summary: Update tenant
+      description: Updates an existing tenant's properties.
+      operationId: updateTenant
+      tags:
+        - Tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantRequest'
+      responses:
+        '200':
+          description: Tenant updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      summary: Delete tenant
+      description: Permanently deletes a tenant and all associated data.
+      operationId: deleteTenant
+      tags:
+        - Tenants
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      responses:
+        '200':
+          description: Tenant deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tenants/slug/{slug}:
+    get:
+      summary: Get tenant by slug
+      description: Returns a single tenant by its unique slug.
+      operationId: getTenantBySlug
+      tags:
+        - Tenants
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Unique tenant slug
+          schema:
+            type: string
+            minLength: 4
+            maxLength: 64
+            pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+            example: my-company
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tenants/{tenant_id}/projects:
+    get:
+      summary: List projects for a tenant
+      description: Returns a paginated list of all projects belonging to the specified tenant.
+      operationId: listProjects
+      tags:
+        - Projects
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          description: Tenant UUID
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Project'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      summary: Create a new project
+      description: Creates a new project under the specified tenant.
+      operationId: createProject
+      tags:
+        - Projects
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          description: Tenant UUID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Project created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /projects/{id}:
+    get:
+      summary: Get project by ID
+      description: Returns a single project by its UUID.
+      operationId: getProject
+      tags:
+        - Projects
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      summary: Update project
+      description: Updates an existing project's properties.
+      operationId: updateProject
+      tags:
+        - Projects
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Project updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      summary: Delete project
+      description: Permanently deletes a project and all associated test runs.
+      operationId: deleteProject
+      tags:
+        - Projects
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdParam'
+      responses:
+        '200':
+          description: Project deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /projects/{project_id}/runs:
+    get:
+      summary: List test runs for a project
+      description: Returns a paginated list of all test runs belonging to the specified project.
+      operationId: listTestRuns
+      tags:
+        - Test Runs
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          description: Project UUID
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TestRun'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /runs:
+    post:
+      summary: Create a new test run
+      description: |
+        Creates and starts a new test run for a project. The test run will go through
+        the following stages:
+        1. **Discovering** - Crawls the target URL to discover pages and flows
+        2. **Designing** - Uses AI to generate comprehensive test cases
+        3. **Automating** - Generates Playwright test scripts
+        4. **Executing** - Runs the generated tests
+        5. **Healing** - Automatically repairs any broken tests
+        6. **Reporting** - Generates the final test report
+      operationId: createTestRun
+      tags:
+        - Test Runs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTestRunRequest'
+      responses:
+        '201':
+          description: Test run created and started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestRun'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          description: Quota exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                code: QUOTA_EXCEEDED
+                message: Maximum concurrent runs exceeded
+                details:
+                  limit: 5
+                  current: 5
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /runs/{id}:
+    get:
+      summary: Get test run by ID
+      description: Returns detailed information about a test run including discovery results, test plan, and execution summary.
+      operationId: getTestRun
+      tags:
+        - Test Runs
+      parameters:
+        - $ref: '#/components/parameters/TestRunIdParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestRun'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      summary: Delete test run
+      description: |
+        Permanently deletes a test run and all associated data.
+
+        **Note**: Only test runs in terminal states (completed, failed, cancelled) can be deleted.
+        Active runs must be cancelled first.
+      operationId: deleteTestRun
+      tags:
+        - Test Runs
+      parameters:
+        - $ref: '#/components/parameters/TestRunIdParam'
+      responses:
+        '200':
+          description: Test run deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Cannot delete active test run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                code: INVALID_STATE
+                message: Cannot delete active test run. Cancel it first.
+                details:
+                  status: executing
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /runs/{id}/cancel:
+    post:
+      summary: Cancel test run
+      description: |
+        Cancels an active test run. This will attempt to gracefully stop all
+        running operations and mark the run as cancelled.
+
+        **Note**: Only active test runs can be cancelled. Runs in terminal states
+        (completed, failed, cancelled) will return a 409 error.
+      operationId: cancelTestRun
+      tags:
+        - Test Runs
+      parameters:
+        - $ref: '#/components/parameters/TestRunIdParam'
+      responses:
+        '200':
+          description: Test run cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestRun'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Test run already in terminal state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                code: INVALID_STATE
+                message: Test run is already in terminal state
+                details:
+                  status: completed
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from authentication
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for programmatic access
+
+  parameters:
+    TenantIdParam:
+      name: id
+      in: path
+      required: true
+      description: Tenant UUID
+      schema:
+        type: string
+        format: uuid
+
+    ProjectIdParam:
+      name: id
+      in: path
+      required: true
+      description: Project UUID
+      schema:
+        type: string
+        format: uuid
+
+    TestRunIdParam:
+      name: id
+      in: path
+      required: true
+      description: Test Run UUID
+      schema:
+        type: string
+        format: uuid
+
+    PageParam:
+      name: page
+      in: query
+      description: Page number for pagination
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    PerPageParam:
+      name: per_page
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  schemas:
+    Tenant:
+      type: object
+      required:
+        - id
+        - name
+        - slug
+        - plan
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique tenant identifier
+        name:
+          type: string
+          maxLength: 255
+          description: Display name for the tenant
+        slug:
+          type: string
+          minLength: 4
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+          description: URL-friendly unique identifier
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+          description: Subscription plan level
+        settings:
+          $ref: '#/components/schemas/TenantSettings'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TenantSettings:
+      type: object
+      properties:
+        max_concurrent_runs:
+          type: integer
+          description: Maximum parallel test runs allowed
+          default: 5
+        max_test_cases_per_run:
+          type: integer
+          description: Maximum test cases per run
+          default: 100
+        retention_days:
+          type: integer
+          description: Days to retain test data
+          default: 30
+        enable_self_healing:
+          type: boolean
+          description: Enable AI self-healing for broken tests
+          default: true
+        enable_visual_testing:
+          type: boolean
+          description: Enable visual regression testing
+          default: true
+        allowed_domains:
+          type: array
+          items:
+            type: string
+          description: Whitelisted domains for testing
+        webhook_secret:
+          type: string
+          description: Secret for webhook signature verification
+        notify_on_complete:
+          type: boolean
+          description: Send notification when test run completes
+          default: true
+        notify_on_failure:
+          type: boolean
+          description: Send notification on test failures
+          default: true
+
+    CreateTenantRequest:
+      type: object
+      required:
+        - name
+        - slug
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Display name for the tenant
+          example: My Company
+        slug:
+          type: string
+          minLength: 4
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+          description: URL-friendly unique identifier (lowercase, letters, numbers, hyphens)
+          example: my-company
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+          default: free
+          description: Subscription plan level
+
+    UpdateTenantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+        settings:
+          $ref: '#/components/schemas/TenantSettings'
+
+    Project:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - name
+        - base_url
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        base_url:
+          type: string
+          format: uri
+          description: Base URL for the application under test
+        settings:
+          $ref: '#/components/schemas/ProjectSettings'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectSettings:
+      type: object
+      properties:
+        auth_type:
+          type: string
+          enum: [none, basic, bearer, cookie, custom]
+          default: none
+          description: Authentication method for the target application
+        auth_config:
+          type: object
+          additionalProperties: true
+          description: Authentication configuration (credentials, tokens, etc.)
+        default_browser:
+          type: string
+          enum: [chromium, firefox, webkit]
+          default: chromium
+        default_viewport:
+          type: string
+          enum: [desktop, tablet, mobile]
+          default: desktop
+        viewport_width:
+          type: integer
+          default: 1920
+        viewport_height:
+          type: integer
+          default: 1080
+        default_timeout_ms:
+          type: integer
+          default: 30000
+          description: Default timeout for test operations in milliseconds
+        retry_failed_tests:
+          type: integer
+          default: 2
+          description: Number of retries for failed tests
+        parallel_workers:
+          type: integer
+          default: 4
+          description: Number of parallel test workers
+        capture_screenshots:
+          type: boolean
+          default: true
+        capture_video:
+          type: boolean
+          default: true
+        capture_trace:
+          type: boolean
+          default: false
+          description: Capture Playwright trace for debugging
+        max_crawl_depth:
+          type: integer
+          default: 5
+          description: Maximum depth for crawler discovery
+        exclude_patterns:
+          type: array
+          items:
+            type: string
+          description: URL patterns to exclude from crawling
+        include_patterns:
+          type: array
+          items:
+            type: string
+          description: URL patterns to include in crawling
+        respect_robots_txt:
+          type: boolean
+          default: true
+        custom_headers:
+          type: object
+          additionalProperties:
+            type: string
+        custom_cookies:
+          type: array
+          items:
+            $ref: '#/components/schemas/Cookie'
+
+    Cookie:
+      type: object
+      required:
+        - name
+        - value
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+        domain:
+          type: string
+        path:
+          type: string
+          default: /
+        secure:
+          type: boolean
+          default: false
+        http_only:
+          type: boolean
+          default: false
+
+    CreateProjectRequest:
+      type: object
+      required:
+        - name
+        - base_url
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: E-Commerce Site
+        description:
+          type: string
+          example: Main e-commerce application tests
+        base_url:
+          type: string
+          format: uri
+          example: https://example.com
+        settings:
+          $ref: '#/components/schemas/ProjectSettings'
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        base_url:
+          type: string
+          format: uri
+        settings:
+          $ref: '#/components/schemas/ProjectSettings'
+
+    TestRun:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - project_id
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - pending
+            - discovering
+            - designing
+            - automating
+            - executing
+            - healing
+            - reporting
+            - completed
+            - failed
+            - cancelled
+          description: Current status of the test run
+        target_url:
+          type: string
+          format: uri
+          description: URL being tested
+        workflow_id:
+          type: string
+          description: Temporal workflow ID
+        workflow_status:
+          type: string
+          description: Temporal workflow status
+        discovery_result:
+          $ref: '#/components/schemas/DiscoveryResult'
+        test_plan:
+          $ref: '#/components/schemas/TestPlan'
+        summary:
+          $ref: '#/components/schemas/TestRunSummary'
+        report_url:
+          type: string
+          format: uri
+          description: URL to the generated test report
+        triggered_by:
+          type: string
+          description: What triggered this run (api, user:id, schedule, webhook)
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DiscoveryResult:
+      type: object
+      properties:
+        pages:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveredPage'
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/Component'
+        business_flows:
+          type: array
+          items:
+            $ref: '#/components/schemas/BusinessFlow'
+        total_pages:
+          type: integer
+        total_forms:
+          type: integer
+        total_links:
+          type: integer
+        tech_stack:
+          type: array
+          items:
+            type: string
+        crawl_duration:
+          type: integer
+          description: Crawl duration in milliseconds
+        errors:
+          type: array
+          items:
+            type: string
+
+    DiscoveredPage:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        description:
+          type: string
+        page_type:
+          type: string
+          enum: [landing, form, list, detail, auth, error]
+        elements:
+          type: object
+          properties:
+            forms:
+              type: integer
+            buttons:
+              type: integer
+            links:
+              type: integer
+            inputs:
+              type: integer
+            tables:
+              type: integer
+            modals:
+              type: integer
+            images:
+              type: integer
+        screenshots:
+          type: array
+          items:
+            type: string
+        load_time:
+          type: integer
+          description: Page load time in milliseconds
+        status_code:
+          type: integer
+
+    Component:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [navbar, sidebar, footer, form, modal, card, table]
+        selector:
+          type: string
+        pages:
+          type: array
+          items:
+            type: string
+        is_global:
+          type: boolean
+
+    BusinessFlow:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        steps:
+          type: array
+          items:
+            type: string
+        flow_type:
+          type: string
+          enum: [auth, checkout, registration, search, crud]
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+
+    TestPlan:
+      type: object
+      properties:
+        id:
+          type: string
+        test_cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestCase'
+        total_count:
+          type: integer
+        by_priority:
+          type: object
+          additionalProperties:
+            type: integer
+        by_category:
+          type: object
+          additionalProperties:
+            type: integer
+        generated_at:
+          type: string
+          format: date-time
+
+    TestCase:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [smoke, regression, e2e, accessibility, security, performance]
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        category:
+          type: string
+        given:
+          type: string
+          description: Given precondition (BDD)
+        when:
+          type: string
+          description: When action (BDD)
+        then:
+          type: string
+          description: Then expectation (BDD)
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestStep'
+        tags:
+          type: array
+          items:
+            type: string
+        target_url:
+          type: string
+          format: uri
+        estimated_duration:
+          type: string
+          description: Estimated execution time
+
+    TestStep:
+      type: object
+      properties:
+        action:
+          type: string
+          description: Action to perform
+        selector:
+          type: string
+          description: Element selector
+        value:
+          type: string
+          description: Value to use (for input actions)
+        expected:
+          type: string
+          description: Expected result
+
+    TestRunSummary:
+      type: object
+      properties:
+        total_tests:
+          type: integer
+        passed:
+          type: integer
+        failed:
+          type: integer
+        skipped:
+          type: integer
+        healed:
+          type: integer
+          description: Tests that were auto-healed
+        flaky:
+          type: integer
+          description: Tests that showed flaky behavior
+        duration:
+          type: integer
+          description: Total execution time in milliseconds
+        pass_rate:
+          type: number
+          format: float
+          description: Percentage of passed tests
+        heal_rate:
+          type: number
+          format: float
+          description: Percentage of healed tests
+
+    CreateTestRunRequest:
+      type: object
+      required:
+        - project_id
+      properties:
+        project_id:
+          type: string
+          format: uuid
+          description: Project to run tests for
+        target_url:
+          type: string
+          format: uri
+          description: Override the project's base URL for this run
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+
+    DeleteResponse:
+      type: object
+      properties:
+        deleted:
+          type: boolean
+          example: true
+
+    ErrorResponse:
+      type: object
+      required:
+        - status
+        - code
+        - message
+      properties:
+        status:
+          type: string
+          enum: [error]
+        code:
+          type: string
+          description: Machine-readable error code
+          example: NOT_FOUND
+        message:
+          type: string
+          description: Human-readable error message
+          example: Resource not found
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error context
+
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          properties:
+            database:
+              $ref: '#/components/schemas/HealthCheck'
+            redis:
+              $ref: '#/components/schemas/HealthCheck'
+            temporal:
+              $ref: '#/components/schemas/HealthCheck'
+
+    HealthCheck:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [up, down]
+        latency_ms:
+          type: integer
+        error:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            code: VALIDATION_ERROR
+            message: Invalid input
+            details:
+              field: name
+              error: cannot be empty
+
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            code: UNAUTHORIZED
+            message: Authentication required
+
+    Forbidden:
+      description: Access denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            code: FORBIDDEN
+            message: Access denied to this resource
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            code: NOT_FOUND
+            message: Resource not found
+
+    Conflict:
+      description: Resource conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            code: ALREADY_EXISTS
+            message: Resource already exists
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: error
+            code: INTERNAL_ERROR
+            message: An unexpected error occurred
+
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []

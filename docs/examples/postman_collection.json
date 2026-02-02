@@ -1,0 +1,371 @@
+{
+  "info": {
+    "name": "TestForge API",
+    "description": "AI-powered test automation platform API",
+    "version": "1.0.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{api_key}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080/api/v1"
+    },
+    {
+      "key": "api_key",
+      "value": "your-api-key"
+    },
+    {
+      "key": "tenant_id",
+      "value": ""
+    },
+    {
+      "key": "project_id",
+      "value": ""
+    },
+    {
+      "key": "run_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/../health",
+              "host": ["{{base_url}}"],
+              "path": ["..", "health"]
+            }
+          }
+        },
+        {
+          "name": "Readiness Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/../ready",
+              "host": ["{{base_url}}"],
+              "path": ["..", "ready"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tenants",
+      "item": [
+        {
+          "name": "List Tenants",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/tenants?page=1&per_page=20",
+              "host": ["{{base_url}}"],
+              "path": ["tenants"],
+              "query": [
+                {"key": "page", "value": "1"},
+                {"key": "per_page", "value": "20"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Tenant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.collectionVariables.set('tenant_id', jsonData.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"My Company\",\n  \"slug\": \"my-company\",\n  \"plan\": \"pro\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/tenants",
+              "host": ["{{base_url}}"],
+              "path": ["tenants"]
+            }
+          }
+        },
+        {
+          "name": "Get Tenant",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/tenants/{{tenant_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["tenants", "{{tenant_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get Tenant by Slug",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/tenants/slug/my-company",
+              "host": ["{{base_url}}"],
+              "path": ["tenants", "slug", "my-company"]
+            }
+          }
+        },
+        {
+          "name": "Update Tenant",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"My Company Updated\",\n  \"settings\": {\n    \"max_concurrent_runs\": 10\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/tenants/{{tenant_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["tenants", "{{tenant_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Tenant",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/tenants/{{tenant_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["tenants", "{{tenant_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Projects",
+      "item": [
+        {
+          "name": "List Projects",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/tenants/{{tenant_id}}/projects",
+              "host": ["{{base_url}}"],
+              "path": ["tenants", "{{tenant_id}}", "projects"]
+            }
+          }
+        },
+        {
+          "name": "Create Project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.collectionVariables.set('project_id', jsonData.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"E-Commerce Site\",\n  \"description\": \"Main e-commerce application tests\",\n  \"base_url\": \"https://example.com\",\n  \"settings\": {\n    \"default_browser\": \"chromium\",\n    \"capture_screenshots\": true,\n    \"capture_video\": true\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/tenants/{{tenant_id}}/projects",
+              "host": ["{{base_url}}"],
+              "path": ["tenants", "{{tenant_id}}", "projects"]
+            }
+          }
+        },
+        {
+          "name": "Get Project",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/projects/{{project_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["projects", "{{project_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Project",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"E-Commerce Site Updated\",\n  \"settings\": {\n    \"parallel_workers\": 8\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/projects/{{project_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["projects", "{{project_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete Project",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/projects/{{project_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["projects", "{{project_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Test Runs",
+      "item": [
+        {
+          "name": "List Test Runs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/projects/{{project_id}}/runs",
+              "host": ["{{base_url}}"],
+              "path": ["projects", "{{project_id}}", "runs"]
+            }
+          }
+        },
+        {
+          "name": "Create Test Run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "    pm.collectionVariables.set('run_id', jsonData.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_id\": \"{{project_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/runs",
+              "host": ["{{base_url}}"],
+              "path": ["runs"]
+            }
+          }
+        },
+        {
+          "name": "Get Test Run",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/runs/{{run_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["runs", "{{run_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Cancel Test Run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/runs/{{run_id}}/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["runs", "{{run_id}}", "cancel"]
+            }
+          }
+        },
+        {
+          "name": "Delete Test Run",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {"key": "X-Tenant-ID", "value": "{{tenant_id}}"}
+            ],
+            "url": {
+              "raw": "{{base_url}}/runs/{{run_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["runs", "{{run_id}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
