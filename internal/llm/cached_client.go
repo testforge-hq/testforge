@@ -8,6 +8,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// CompletionOptions holds options for completion requests
+type CompletionOptions struct {
+	System      string  // System prompt
+	Temperature float64 // Temperature (0.0-1.0)
+	MaxTokens   int     // Max output tokens
+	UseCache    bool    // Whether to use cache
+}
+
 // CachedClaudeClient wraps ClaudeClient with advanced caching and cost tracking
 type CachedClaudeClient struct {
 	*ClaudeClient
@@ -87,7 +95,17 @@ func (c *CachedClaudeClient) CompleteWithCaching(ctx context.Context, prompt str
 
 	// Make API call
 	startTime := time.Now()
-	response, err := c.CompleteWithOptions(ctx, prompt, options)
+	systemPrompt := ""
+	temperature := 0.7
+	useCache := true
+	if options != nil {
+		systemPrompt = options.System
+		if options.Temperature != 0 {
+			temperature = options.Temperature
+		}
+		useCache = options.UseCache
+	}
+	response, _, err := c.CompleteWithOptions(ctx, systemPrompt, prompt, temperature, useCache)
 	duration := time.Since(startTime)
 
 	if err != nil {

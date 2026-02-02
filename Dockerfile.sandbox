@@ -1,0 +1,31 @@
+# TestForge Playwright Sandbox Dockerfile
+# Used for executing Playwright tests in isolated containers
+
+FROM mcr.microsoft.com/playwright:v1.42.1-jammy
+
+WORKDIR /app
+
+# Install additional tools
+RUN apt-get update && apt-get install -y \
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -g 1000 sandbox && \
+    useradd -u 1000 -g sandbox -s /bin/bash -m sandbox
+
+# Create directories for test artifacts
+RUN mkdir -p /app/tests /app/results /app/screenshots /app/videos && \
+    chown -R sandbox:sandbox /app
+
+USER sandbox
+
+# Default test timeout
+ENV PLAYWRIGHT_TIMEOUT=60000
+
+# Entry point script
+COPY --chown=sandbox:sandbox scripts/sandbox-entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -57,7 +57,7 @@ type TokenCache struct {
 	logger *zap.Logger
 
 	// In-memory cache with LRU eviction
-	memCache   map[string]*cacheEntry
+	memCache   map[string]*tokenCacheEntry
 	memCacheMu sync.RWMutex
 	lruList    []string // Simple LRU tracking
 
@@ -66,7 +66,7 @@ type TokenCache struct {
 	statsMu sync.Mutex
 }
 
-type cacheEntry struct {
+type tokenCacheEntry struct {
 	response    string
 	tokens      TokenUsage
 	createdAt   time.Time
@@ -99,7 +99,7 @@ func NewTokenCache(config TokenCacheConfig, redisClient *redis.Client, logger *z
 		config:   config,
 		redis:    redisClient,
 		logger:   logger,
-		memCache: make(map[string]*cacheEntry),
+		memCache: make(map[string]*tokenCacheEntry),
 		lruList:  make([]string, 0, config.MemoryMaxSize),
 		stats:    &CacheStats{},
 	}
@@ -228,7 +228,7 @@ func (tc *TokenCache) ResetStats() {
 func (tc *TokenCache) Clear(ctx context.Context) error {
 	// Clear memory cache
 	tc.memCacheMu.Lock()
-	tc.memCache = make(map[string]*cacheEntry)
+	tc.memCache = make(map[string]*tokenCacheEntry)
 	tc.lruList = make([]string, 0, tc.config.MemoryMaxSize)
 	tc.memCacheMu.Unlock()
 
@@ -255,7 +255,7 @@ func (tc *TokenCache) setMemoryCache(key string, response string, tokens TokenUs
 		tc.evictOldest()
 	}
 
-	tc.memCache[key] = &cacheEntry{
+	tc.memCache[key] = &tokenCacheEntry{
 		response:  response,
 		tokens:    tokens,
 		createdAt: time.Now(),
@@ -332,7 +332,7 @@ func (tc *TokenCache) cleanup() {
 type PromptCache struct {
 	tokenCache *TokenCache
 	embedder   Embedder
-	qdrant     *QdrantClient
+	qdrant     QdrantClient
 	logger     *zap.Logger
 	threshold  float32
 }

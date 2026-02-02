@@ -59,7 +59,7 @@ spec:
               name: grpc
           env:
             - name: DB
-              value: postgresql
+              value: postgres12
             - name: DB_PORT
               value: "5432"
             - name: POSTGRES_USER
@@ -86,7 +86,8 @@ spec:
               value: temporal.testforge-temporal.svc.cluster.local:7233
           volumeMounts:
             - name: config
-              mountPath: /etc/temporal
+              mountPath: /etc/temporal/dynamicconfig.yaml
+              subPath: dynamicconfig.yaml
           resources:
             requests:
               memory: "512Mi"
@@ -95,24 +96,14 @@ spec:
               memory: "2Gi"
               cpu: "1000m"
           livenessProbe:
-            exec:
-              command:
-                - tctl
-                - --address
-                - localhost:7233
-                - cluster
-                - health
+            tcpSocket:
+              port: 7233
             initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 10
           readinessProbe:
-            exec:
-              command:
-                - tctl
-                - --address
-                - localhost:7233
-                - cluster
-                - health
+            tcpSocket:
+              port: 7233
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5

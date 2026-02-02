@@ -41,8 +41,8 @@ spec:
               echo "All dependencies ready"
       containers:
         - name: worker
-          image: testforge/worker:latest
-          imagePullPolicy: Always
+          image: docker.io/testforge/worker:latest
+          imagePullPolicy: Never
           envFrom:
             - secretRef:
                 name: testforge-secrets
@@ -60,7 +60,7 @@ spec:
               command:
                 - /bin/sh
                 - -c
-                - "pgrep -f testforge-worker"
+                - "pgrep worker"
             initialDelaySeconds: 30
             periodSeconds: 10
           readinessProbe:
@@ -68,7 +68,7 @@ spec:
               command:
                 - /bin/sh
                 - -c
-                - "pgrep -f testforge-worker"
+                - "pgrep worker"
             initialDelaySeconds: 10
             periodSeconds: 5
 ---

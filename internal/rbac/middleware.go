@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"testforge/internal/api/middleware"
+	"github.com/testforge/testforge/internal/api/middleware"
 )
 
 // ContextKey is a type for context keys

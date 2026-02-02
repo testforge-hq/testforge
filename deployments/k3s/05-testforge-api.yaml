@@ -38,8 +38,9 @@ metadata:
   namespace: testforge
 data:
   APP_NAME: testforge
-  APP_ENV: production
-  APP_DEBUG: "false"
+  APP_ENV: development
+  APP_DEBUG: "true"
+  TESTFORGE_DEV_MODE: "true"
   APP_VERSION: "0.1.0"
   LOG_LEVEL: info
   SERVER_HOST: "0.0.0.0"
@@ -93,8 +94,8 @@ spec:
               echo "All dependencies ready"
       containers:
         - name: api
-          image: testforge/api:latest
-          imagePullPolicy: Always
+          image: docker.io/testforge/api:latest
+          imagePullPolicy: Never
           ports:
             - containerPort: 8080
           envFrom:

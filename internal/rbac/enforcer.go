@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"testforge/internal/domain"
+	"github.com/testforge/testforge/internal/domain"
 )
 
 // Enforcer handles permission checking with caching

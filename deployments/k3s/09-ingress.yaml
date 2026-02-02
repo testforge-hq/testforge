@@ -1,0 +1,62 @@
+# TestForge Ingress Configuration
+# Uses k3s built-in Traefik ingress controller
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: testforge-ingress
+  namespace: testforge
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: testforge.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: testforge-api
+                port:
+                  number: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: temporal-ingress
+  namespace: testforge-temporal
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: temporal.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: temporal-ui
+                port:
+                  number: 8088
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-ingress
+  namespace: testforge-data
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: minio.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9001

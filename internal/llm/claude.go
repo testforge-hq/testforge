@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"testforge/internal/resilience"
+	"github.com/testforge/testforge/internal/resilience"
 )
 
 var (
