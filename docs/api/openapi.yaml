@@ -11,21 +11,31 @@ info:
     - **Script Generation**: Produces production-ready Playwright test scripts
     - **Self-Healing**: Automatically repairs broken tests using AI
     - **Visual Testing**: AI-powered visual regression detection
+    - **Cross-Tenant Learning**: Anonymized pattern learning across all users
+    - **Viral Features**: Badges, shareable reports, GitHub integration
 
     ## Authentication
     All API endpoints (except health checks) require authentication via:
-    - `Authorization: Bearer <token>` header, or
-    - `X-API-Key: <api-key>` header
+    - `Authorization: Bearer <token>` header (JWT from SSO/login), or
+    - `X-API-Key: <api-key>` header (for programmatic access)
 
     Additionally, requests require a tenant context via:
     - `X-Tenant-ID: <tenant-uuid>` header
 
     ## Rate Limiting
-    API requests are rate limited to 300 requests per minute per tenant.
+    API requests are rate limited based on your plan:
+    - **Free**: 100 requests per minute
+    - **Pro**: 300 requests per minute
+    - **Enterprise**: Custom limits
+
     Rate limit headers are included in responses:
     - `X-RateLimit-Limit`: Maximum requests per window
     - `X-RateLimit-Remaining`: Remaining requests in current window
-  version: 1.0.0
+    - `X-RateLimit-Reset`: Unix timestamp when window resets
+
+    ## Webhooks
+    TestForge can send webhooks for test run events. Configure webhooks in your project settings.
+  version: 2.0.0
   contact:
     name: TestForge Support
     email: support@testforge.io
@@ -43,14 +53,33 @@ servers:
 tags:
   - name: Health
     description: Health check endpoints
+  - name: Authentication
+    description: User authentication and session management
   - name: Tenants
     description: Tenant management operations
   - name: Projects
     description: Project management operations
   - name: Test Runs
     description: Test run management and execution
+  - name: Billing
+    description: Subscription and billing management
+  - name: Usage
+    description: Usage tracking and quotas
+  - name: Badges
+    description: Project status badges
+  - name: Shareable Reports
+    description: Public shareable test reports
+  - name: GitHub
+    description: GitHub integration
+  - name: Intelligence
+    description: AI suggestions and learning
+  - name: Referrals
+    description: Referral program
+  - name: Admin
+    description: Admin dashboard (requires admin role)
 
 paths:
+  # ==================== Health ====================
   /health:
     get:
       summary: Basic health check
@@ -96,6 +125,230 @@ paths:
               schema:
                 $ref: '#/components/schemas/ReadinessResponse'
 
+  # ==================== Authentication ====================
+  /auth/register:
+    post:
+      summary: Register a new user
+      description: Creates a new user account with email and password.
+      operationId: register
+      tags:
+        - Authentication
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      summary: Login with email and password
+      description: Authenticates a user and returns a JWT token.
+      operationId: login
+      tags:
+        - Authentication
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      summary: Logout current session
+      description: Invalidates the current JWT token.
+      operationId: logout
+      tags:
+        - Authentication
+      responses:
+        '200':
+          description: Logged out successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      description: Exchange a refresh token for a new access token.
+      operationId: refreshToken
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/verify-email:
+    post:
+      summary: Verify email address
+      description: Verifies a user's email address using a verification token.
+      operationId: verifyEmail
+      tags:
+        - Authentication
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  description: Email verification token
+      responses:
+        '200':
+          description: Email verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '400':
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/sso/{provider}:
+    get:
+      summary: Initiate SSO login
+      description: Redirects to the OAuth provider for authentication.
+      operationId: ssoInitiate
+      tags:
+        - Authentication
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: OAuth provider name
+          schema:
+            type: string
+            enum: [google, github, okta, azure]
+        - name: redirect_uri
+          in: query
+          description: URL to redirect after authentication
+          schema:
+            type: string
+            format: uri
+      responses:
+        '302':
+          description: Redirect to OAuth provider
+        '400':
+          description: Invalid provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/sso/{provider}/callback:
+    get:
+      summary: SSO callback
+      description: Handles OAuth callback from provider.
+      operationId: ssoCallback
+      tags:
+        - Authentication
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [google, github, okta, azure]
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to application with token
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /auth/me:
+    get:
+      summary: Get current user
+      description: Returns the currently authenticated user's information.
+      operationId: getCurrentUser
+      tags:
+        - Authentication
+      responses:
+        '200':
+          description: Current user info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ==================== Tenants ====================
   /tenants:
     get:
       summary: List all tenants
@@ -264,6 +517,79 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /tenants/{tenant_id}/members:
+    get:
+      summary: List tenant members
+      description: Returns all members of a tenant with their roles.
+      operationId: listTenantMembers
+      tags:
+        - Tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TenantMember'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      summary: Add tenant member
+      description: Invites a user to join the tenant with a specified role.
+      operationId: addTenantMember
+      tags:
+        - Tenants
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - role
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum: [admin, developer, viewer]
+      responses:
+        '201':
+          description: Member added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantMember'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ==================== Projects ====================
   /tenants/{tenant_id}/projects:
     get:
       summary: List projects for a tenant
@@ -425,6 +751,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  # ==================== Test Runs ====================
   /projects/{project_id}/runs:
     get:
       summary: List test runs for a project
@@ -442,6 +769,12 @@ paths:
             format: uuid
         - $ref: '#/components/parameters/PageParam'
         - $ref: '#/components/parameters/PerPageParam'
+        - name: status
+          in: query
+          description: Filter by status
+          schema:
+            type: string
+            enum: [pending, discovering, designing, automating, executing, healing, reporting, completed, failed, cancelled]
       responses:
         '200':
           description: Successful response
@@ -628,6 +961,1108 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  # ==================== Billing ====================
+  /billing/plans:
+    get:
+      summary: List available plans
+      description: Returns all available subscription plans with pricing.
+      operationId: listPlans
+      tags:
+        - Billing
+      security: []
+      responses:
+        '200':
+          description: Available plans
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plans:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Plan'
+
+  /billing/subscription:
+    get:
+      summary: Get current subscription
+      description: Returns the current tenant's subscription details.
+      operationId: getSubscription
+      tags:
+        - Billing
+      responses:
+        '200':
+          description: Subscription details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create subscription
+      description: Creates a new subscription for the tenant.
+      operationId: createSubscription
+      tags:
+        - Billing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - plan
+                - payment_method_id
+              properties:
+                plan:
+                  type: string
+                  enum: [pro, enterprise]
+                payment_method_id:
+                  type: string
+                  description: Stripe payment method ID
+      responses:
+        '201':
+          description: Subscription created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+    put:
+      summary: Update subscription
+      description: Updates the current subscription (upgrade/downgrade).
+      operationId: updateSubscription
+      tags:
+        - Billing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - plan
+              properties:
+                plan:
+                  type: string
+                  enum: [free, pro, enterprise]
+      responses:
+        '200':
+          description: Subscription updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+    delete:
+      summary: Cancel subscription
+      description: Cancels the current subscription at the end of the billing period.
+      operationId: cancelSubscription
+      tags:
+        - Billing
+      responses:
+        '200':
+          description: Subscription cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+
+  /billing/portal:
+    post:
+      summary: Get billing portal URL
+      description: Returns a URL to the Stripe customer portal for managing payment methods and invoices.
+      operationId: getBillingPortal
+      tags:
+        - Billing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                return_url:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Portal URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+
+  /billing/invoices:
+    get:
+      summary: List invoices
+      description: Returns a list of all invoices for the tenant.
+      operationId: listInvoices
+      tags:
+        - Billing
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        '200':
+          description: List of invoices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Invoice'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+  # ==================== Usage ====================
+  /usage/summary:
+    get:
+      summary: Get usage summary
+      description: Returns current billing period usage summary.
+      operationId: getUsageSummary
+      tags:
+        - Usage
+      parameters:
+        - name: period
+          in: query
+          description: Billing period (defaults to current)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Usage summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /usage/history:
+    get:
+      summary: Get usage history
+      description: Returns daily usage history for the specified period.
+      operationId: getUsageHistory
+      tags:
+        - Usage
+      parameters:
+        - name: start_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: metric
+          in: query
+          description: Filter by specific metric
+          schema:
+            type: string
+            enum: [test_runs, ai_tokens, sandbox_minutes]
+      responses:
+        '200':
+          description: Usage history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UsageRecord'
+
+  /usage/quotas:
+    get:
+      summary: Get current quotas
+      description: Returns current quota limits and usage.
+      operationId: getQuotas
+      tags:
+        - Usage
+      responses:
+        '200':
+          description: Quota information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaInfo'
+
+  # ==================== Badges ====================
+  /badges/{project_id}.svg:
+    get:
+      summary: Get project status badge
+      description: Returns an SVG badge showing the project's test status.
+      operationId: getProjectBadge
+      tags:
+        - Badges
+      security: []
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: style
+          in: query
+          description: Badge style
+          schema:
+            type: string
+            enum: [flat, flat-square, plastic]
+            default: flat
+        - name: label
+          in: query
+          description: Custom label text
+          schema:
+            type: string
+            default: tests
+      responses:
+        '200':
+          description: SVG badge
+          content:
+            image/svg+xml:
+              schema:
+                type: string
+        '404':
+          description: Project not found
+
+  /badges/{project_id}/markdown:
+    get:
+      summary: Get badge markdown
+      description: Returns markdown snippet for embedding the badge.
+      operationId: getBadgeMarkdown
+      tags:
+        - Badges
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Markdown snippet
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  markdown:
+                    type: string
+                    example: "[![Tests](https://api.testforge.io/badges/xxx.svg)](https://testforge.io/projects/xxx)"
+                  html:
+                    type: string
+
+  # ==================== Shareable Reports ====================
+  /runs/{id}/share:
+    post:
+      summary: Create shareable report
+      description: Creates a public shareable link for a test run report.
+      operationId: createShareableReport
+      tags:
+        - Shareable Reports
+      parameters:
+        - $ref: '#/components/parameters/TestRunIdParam'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expires_in_hours:
+                  type: integer
+                  description: Hours until link expires (0 = never)
+                  default: 168
+                password:
+                  type: string
+                  description: Optional password protection
+                max_views:
+                  type: integer
+                  description: Maximum number of views (0 = unlimited)
+                  default: 0
+      responses:
+        '201':
+          description: Shareable link created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareableReport'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /r/{share_id}:
+    get:
+      summary: View shared report
+      description: Retrieves a shared report by its public ID.
+      operationId: viewSharedReport
+      tags:
+        - Shareable Reports
+      security: []
+      parameters:
+        - name: share_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: password
+          in: query
+          description: Password if report is protected
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Report data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharedReportView'
+        '401':
+          description: Password required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Report not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: Report expired or max views reached
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /shares/{share_id}/revoke:
+    post:
+      summary: Revoke shareable link
+      description: Revokes a shareable report link.
+      operationId: revokeShareableReport
+      tags:
+        - Shareable Reports
+      parameters:
+        - name: share_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Link revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==================== GitHub Integration ====================
+  /github/install:
+    get:
+      summary: Install GitHub App
+      description: Redirects to GitHub App installation page.
+      operationId: installGitHubApp
+      tags:
+        - GitHub
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '302':
+          description: Redirect to GitHub
+
+  /github/callback:
+    get:
+      summary: GitHub App callback
+      description: Handles GitHub App installation callback.
+      operationId: githubCallback
+      tags:
+        - GitHub
+      security: []
+      parameters:
+        - name: installation_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: setup_action
+          in: query
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to dashboard
+
+  /github/integrations:
+    get:
+      summary: List GitHub integrations
+      description: Returns all GitHub integrations for the tenant.
+      operationId: listGitHubIntegrations
+      tags:
+        - GitHub
+      responses:
+        '200':
+          description: List of integrations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GitHubIntegration'
+
+  /github/integrations/{id}:
+    delete:
+      summary: Remove GitHub integration
+      description: Removes a GitHub integration.
+      operationId: removeGitHubIntegration
+      tags:
+        - GitHub
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Integration removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+
+  /projects/{project_id}/github:
+    put:
+      summary: Link project to GitHub repo
+      description: Links a project to a GitHub repository for PR integration.
+      operationId: linkProjectToGitHub
+      tags:
+        - GitHub
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - owner
+                - repo
+              properties:
+                owner:
+                  type: string
+                  description: GitHub owner/organization
+                repo:
+                  type: string
+                  description: Repository name
+                default_branch:
+                  type: string
+                  default: main
+      responses:
+        '200':
+          description: Project linked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+
+  # ==================== Intelligence ====================
+  /projects/{project_id}/suggestions:
+    get:
+      summary: Get AI suggestions
+      description: Returns AI-powered suggestions for improving tests.
+      operationId: getProjectSuggestions
+      tags:
+        - Intelligence
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: type
+          in: query
+          description: Filter by suggestion type
+          schema:
+            type: string
+            enum: [healing, new_test, flow_coverage, performance, flaky]
+      responses:
+        '200':
+          description: Suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Suggestion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /suggestions/{id}/apply:
+    post:
+      summary: Apply suggestion
+      description: Applies an AI suggestion to the project.
+      operationId: applySuggestion
+      tags:
+        - Intelligence
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Suggestion applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  changes:
+                    type: array
+                    items:
+                      type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /suggestions/{id}/dismiss:
+    post:
+      summary: Dismiss suggestion
+      description: Dismisses an AI suggestion.
+      operationId: dismissSuggestion
+      tags:
+        - Intelligence
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Suggestion dismissed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+
+  /intelligence/patterns:
+    get:
+      summary: Get healing patterns
+      description: Returns learned healing patterns from the knowledge base.
+      operationId: getHealingPatterns
+      tags:
+        - Intelligence
+      parameters:
+        - name: element_type
+          in: query
+          schema:
+            type: string
+        - name: min_success_rate
+          in: query
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+      responses:
+        '200':
+          description: Healing patterns
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HealingPattern'
+
+  /intelligence/templates:
+    get:
+      summary: Get flow templates
+      description: Returns pre-built flow templates for common scenarios.
+      operationId: getFlowTemplates
+      tags:
+        - Intelligence
+      parameters:
+        - name: industry
+          in: query
+          schema:
+            type: string
+            enum: [ecommerce, saas, healthcare, fintech]
+        - name: flow_type
+          in: query
+          schema:
+            type: string
+            enum: [auth, checkout, registration, search, crud]
+      responses:
+        '200':
+          description: Flow templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FlowTemplate'
+
+  # ==================== Referrals ====================
+  /referrals/code:
+    get:
+      summary: Get referral code
+      description: Returns the current user's referral code and stats.
+      operationId: getReferralCode
+      tags:
+        - Referrals
+      responses:
+        '200':
+          description: Referral info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReferralInfo'
+
+  /referrals/stats:
+    get:
+      summary: Get referral stats
+      description: Returns detailed referral statistics.
+      operationId: getReferralStats
+      tags:
+        - Referrals
+      responses:
+        '200':
+          description: Referral stats
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReferralStats'
+
+  /referrals/rewards:
+    get:
+      summary: List available rewards
+      description: Returns available rewards that can be claimed.
+      operationId: listReferralRewards
+      tags:
+        - Referrals
+      responses:
+        '200':
+          description: Available rewards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReferralReward'
+
+  /referrals/rewards/{id}/claim:
+    post:
+      summary: Claim reward
+      description: Claims a referral reward.
+      operationId: claimReferralReward
+      tags:
+        - Referrals
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Reward claimed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '400':
+          description: Insufficient credits or already claimed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==================== Webhooks ====================
+  /webhooks/stripe:
+    post:
+      summary: Stripe webhook
+      description: Handles Stripe webhook events.
+      operationId: stripeWebhook
+      tags:
+        - Billing
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook processed
+        '400':
+          description: Invalid webhook
+
+  /webhooks/github:
+    post:
+      summary: GitHub webhook
+      description: Handles GitHub webhook events (push, PR, etc.).
+      operationId: githubWebhook
+      tags:
+        - GitHub
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook processed
+        '400':
+          description: Invalid webhook
+
+  # ==================== Admin Dashboard ====================
+  /admin/overview:
+    get:
+      summary: Get admin overview
+      description: Returns platform-wide overview statistics.
+      operationId: adminGetOverview
+      tags:
+        - Admin
+      responses:
+        '200':
+          description: Overview statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOverview'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/health:
+    get:
+      summary: Get system health
+      description: Returns detailed system health information.
+      operationId: adminGetSystemHealth
+      tags:
+        - Admin
+      responses:
+        '200':
+          description: System health
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealth'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/tenants:
+    get:
+      summary: List all tenants (admin)
+      description: Returns all tenants with admin-level details.
+      operationId: adminListTenants
+      tags:
+        - Admin
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: plan
+          in: query
+          schema:
+            type: string
+            enum: [free, pro, enterprise]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive, suspended]
+      responses:
+        '200':
+          description: Tenant list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdminTenantDetails'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/tenants/{id}:
+    get:
+      summary: Get tenant details (admin)
+      description: Returns detailed tenant information for admins.
+      operationId: adminGetTenant
+      tags:
+        - Admin
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      responses:
+        '200':
+          description: Tenant details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminTenantDetails'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /admin/users:
+    get:
+      summary: List all users (admin)
+      description: Returns all users across all tenants.
+      operationId: adminListUsers
+      tags:
+        - Admin
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: tenant_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdminUserDetails'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/tests/running:
+    get:
+      summary: Get running tests (admin)
+      description: Returns all currently running tests across the platform.
+      operationId: adminGetRunningTests
+      tags:
+        - Admin
+      responses:
+        '200':
+          description: Running tests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RunningTestInfo'
+                  total:
+                    type: integer
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/billing/overview:
+    get:
+      summary: Get billing overview (admin)
+      description: Returns platform-wide billing statistics.
+      operationId: adminGetBillingOverview
+      tags:
+        - Admin
+      responses:
+        '200':
+          description: Billing overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminBillingOverview'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/costs:
+    get:
+      summary: Get cost analytics (admin)
+      description: Returns platform cost analytics.
+      operationId: adminGetCostAnalytics
+      tags:
+        - Admin
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Cost analytics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostAnalytics'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/activity:
+    get:
+      summary: Get recent activity (admin)
+      description: Returns recent platform activity.
+      operationId: adminGetRecentActivity
+      tags:
+        - Admin
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Activity feed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ActivityEvent'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/feature-flags:
+    get:
+      summary: List feature flags
+      description: Returns all feature flags.
+      operationId: adminListFeatureFlags
+      tags:
+        - Admin
+      responses:
+        '200':
+          description: Feature flags
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FeatureFlag'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/feature-flags/{name}:
+    put:
+      summary: Update feature flag
+      description: Updates a feature flag configuration.
+      operationId: adminUpdateFeatureFlag
+      tags:
+        - Admin
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeatureFlagUpdate'
+      responses:
+        '200':
+          description: Feature flag updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureFlag'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -689,6 +2124,77 @@ components:
         default: 20
 
   schemas:
+    # ==================== Auth Schemas ====================
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        name:
+          type: string
+        referral_code:
+          type: string
+          description: Optional referral code
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          description: Token expiration in seconds
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+        email_verified:
+          type: boolean
+        mfa_enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    # ==================== Tenant Schemas ====================
     Tenant:
       type: object
       required:
@@ -754,6 +2260,10 @@ components:
           items:
             type: string
           description: Whitelisted domains for testing
+        webhook_url:
+          type: string
+          format: uri
+          description: Webhook URL for notifications
         webhook_secret:
           type: string
           description: Secret for webhook signature verification
@@ -802,6 +2312,25 @@ components:
         settings:
           $ref: '#/components/schemas/TenantSettings'
 
+    TenantMember:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [admin, developer, viewer]
+        joined_at:
+          type: string
+          format: date-time
+
+    # ==================== Project Schemas ====================
     Project:
       type: object
       required:
@@ -827,6 +2356,12 @@ components:
           type: string
           format: uri
           description: Base URL for the application under test
+        github_owner:
+          type: string
+          description: GitHub owner/organization
+        github_repo:
+          type: string
+          description: GitHub repository name
         settings:
           $ref: '#/components/schemas/ProjectSettings'
         created_at:
@@ -966,6 +2501,7 @@ components:
         settings:
           $ref: '#/components/schemas/ProjectSettings'
 
+    # ==================== Test Run Schemas ====================
     TestRun:
       type: object
       required:
@@ -1268,6 +2804,660 @@ components:
           format: uri
           description: Override the project's base URL for this run
 
+    # ==================== Billing Schemas ====================
+    Plan:
+      type: object
+      properties:
+        id:
+          type: string
+          enum: [free, pro, enterprise]
+        name:
+          type: string
+        price_monthly:
+          type: integer
+          description: Monthly price in cents
+        price_yearly:
+          type: integer
+          description: Yearly price in cents
+        features:
+          type: array
+          items:
+            type: string
+        limits:
+          type: object
+          properties:
+            test_runs_per_month:
+              type: integer
+            ai_tokens_per_month:
+              type: integer
+            concurrent_runs:
+              type: integer
+            team_members:
+              type: integer
+            retention_days:
+              type: integer
+
+    Subscription:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+        status:
+          type: string
+          enum: [active, past_due, cancelled, trialing]
+        trial_ends_at:
+          type: string
+          format: date-time
+        current_period_start:
+          type: string
+          format: date-time
+        current_period_end:
+          type: string
+          format: date-time
+        cancel_at_period_end:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    Invoice:
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        status:
+          type: string
+          enum: [draft, open, paid, void, uncollectible]
+        amount_due:
+          type: integer
+          description: Amount in cents
+        amount_paid:
+          type: integer
+        currency:
+          type: string
+          default: usd
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        pdf_url:
+          type: string
+          format: uri
+        created_at:
+          type: string
+          format: date-time
+
+    # ==================== Usage Schemas ====================
+    UsageSummary:
+      type: object
+      properties:
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        test_runs:
+          type: object
+          properties:
+            used:
+              type: integer
+            limit:
+              type: integer
+            overage:
+              type: integer
+        ai_tokens:
+          type: object
+          properties:
+            used:
+              type: integer
+            limit:
+              type: integer
+            overage:
+              type: integer
+        sandbox_minutes:
+          type: object
+          properties:
+            used:
+              type: number
+            limit:
+              type: number
+            overage:
+              type: number
+        estimated_overage_cost:
+          type: integer
+          description: Estimated overage cost in cents
+
+    UsageRecord:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        metric:
+          type: string
+          enum: [test_runs, ai_tokens, sandbox_minutes]
+        quantity:
+          type: number
+
+    QuotaInfo:
+      type: object
+      properties:
+        plan:
+          type: string
+        limits:
+          type: object
+          additionalProperties:
+            type: integer
+        current_usage:
+          type: object
+          additionalProperties:
+            type: integer
+        reset_at:
+          type: string
+          format: date-time
+
+    # ==================== Shareable Report Schemas ====================
+    ShareableReport:
+      type: object
+      properties:
+        id:
+          type: string
+        share_id:
+          type: string
+          description: Public share ID
+        url:
+          type: string
+          format: uri
+        test_run_id:
+          type: string
+          format: uuid
+        password_protected:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+        max_views:
+          type: integer
+        view_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    SharedReportView:
+      type: object
+      properties:
+        project_name:
+          type: string
+        status:
+          type: string
+        summary:
+          $ref: '#/components/schemas/TestRunSummary'
+        test_cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestCase'
+        completed_at:
+          type: string
+          format: date-time
+
+    # ==================== GitHub Integration Schemas ====================
+    GitHubIntegration:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        installation_id:
+          type: string
+        account_type:
+          type: string
+          enum: [user, organization]
+        account_name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+        repositories:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # ==================== Intelligence Schemas ====================
+    Suggestion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [healing, new_test, flow_coverage, performance, flaky]
+        title:
+          type: string
+        description:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        impact:
+          type: string
+          enum: [low, medium, high]
+        suggested_action:
+          type: object
+          properties:
+            type:
+              type: string
+            target:
+              type: string
+            changes:
+              type: object
+        created_at:
+          type: string
+          format: date-time
+
+    HealingPattern:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        element_type:
+          type: string
+        original_selector:
+          type: string
+        healed_selector:
+          type: string
+        strategy:
+          type: string
+        success_rate:
+          type: number
+        use_count:
+          type: integer
+
+    FlowTemplate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        industry:
+          type: string
+        flow_type:
+          type: string
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              action:
+                type: string
+              description:
+                type: string
+              selectors:
+                type: array
+                items:
+                  type: string
+
+    # ==================== Referral Schemas ====================
+    ReferralInfo:
+      type: object
+      properties:
+        code:
+          type: string
+        url:
+          type: string
+          format: uri
+        total_referrals:
+          type: integer
+        successful_conversions:
+          type: integer
+        credits_earned:
+          type: integer
+        credits_available:
+          type: integer
+
+    ReferralStats:
+      type: object
+      properties:
+        total_clicks:
+          type: integer
+        total_signups:
+          type: integer
+        total_conversions:
+          type: integer
+        conversion_rate:
+          type: number
+        credits_earned:
+          type: integer
+        credits_claimed:
+          type: integer
+        referrals:
+          type: array
+          items:
+            type: object
+            properties:
+              email:
+                type: string
+                description: Masked email
+              status:
+                type: string
+                enum: [clicked, signed_up, converted]
+              created_at:
+                type: string
+                format: date-time
+
+    ReferralReward:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        credits_required:
+          type: integer
+        reward_type:
+          type: string
+          enum: [discount, free_month, extra_runs, swag]
+        reward_value:
+          type: string
+
+    # ==================== Admin Schemas ====================
+    AdminOverview:
+      type: object
+      properties:
+        total_tenants:
+          type: integer
+        active_tenants:
+          type: integer
+        total_users:
+          type: integer
+        total_projects:
+          type: integer
+        total_test_runs:
+          type: integer
+        running_tests:
+          type: integer
+        mrr:
+          type: number
+          description: Monthly Recurring Revenue
+        unacknowledged_alerts:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    SystemHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        components:
+          type: object
+          properties:
+            api:
+              $ref: '#/components/schemas/ComponentHealth'
+            worker:
+              $ref: '#/components/schemas/ComponentHealth'
+            database:
+              $ref: '#/components/schemas/ComponentHealth'
+            redis:
+              $ref: '#/components/schemas/ComponentHealth'
+            temporal:
+              $ref: '#/components/schemas/ComponentHealth'
+            minio:
+              $ref: '#/components/schemas/ComponentHealth'
+        metrics:
+          type: object
+          properties:
+            requests_per_second:
+              type: number
+            active_connections:
+              type: integer
+            queue_depth:
+              type: integer
+            worker_utilization:
+              type: number
+            memory_usage_mb:
+              type: number
+            cpu_usage_percent:
+              type: number
+
+    ComponentHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [up, down, degraded]
+        latency_ms:
+          type: integer
+        error:
+          type: string
+
+    AdminTenantDetails:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        plan:
+          type: string
+        status:
+          type: string
+        user_count:
+          type: integer
+        project_count:
+          type: integer
+        test_runs_this_month:
+          type: integer
+        mrr:
+          type: number
+        last_activity:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    AdminUserDetails:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        name:
+          type: string
+        tenant_count:
+          type: integer
+        last_login:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    RunningTestInfo:
+      type: object
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        tenant_name:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        project_name:
+          type: string
+        status:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        duration_seconds:
+          type: integer
+
+    AdminBillingOverview:
+      type: object
+      properties:
+        mrr:
+          type: number
+        arr:
+          type: number
+        total_revenue_this_month:
+          type: number
+        subscriptions_by_plan:
+          type: object
+          additionalProperties:
+            type: integer
+        churn_rate:
+          type: number
+        growth_rate:
+          type: number
+
+    CostAnalytics:
+      type: object
+      properties:
+        period_start:
+          type: string
+          format: date
+        period_end:
+          type: string
+          format: date
+        total_cost:
+          type: number
+        costs_by_category:
+          type: object
+          properties:
+            ai_tokens:
+              type: number
+            compute:
+              type: number
+            storage:
+              type: number
+            bandwidth:
+              type: number
+        daily_costs:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              cost:
+                type: number
+
+    ActivityEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        tenant_id:
+          type: string
+          format: uuid
+        tenant_name:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+        user_email:
+          type: string
+        description:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+
+    FeatureFlag:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        percentage_rollout:
+          type: integer
+          minimum: 0
+          maximum: 100
+        allowed_tenants:
+          type: array
+          items:
+            type: string
+            format: uuid
+        allowed_users:
+          type: array
+          items:
+            type: string
+            format: uuid
+        updated_at:
+          type: string
+          format: date-time
+
+    FeatureFlagUpdate:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        percentage_rollout:
+          type: integer
+          minimum: 0
+          maximum: 100
+        allowed_tenants:
+          type: array
+          items:
+            type: string
+            format: uuid
+        allowed_users:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    # ==================== Common Schemas ====================
     PaginationMeta:
       type: object
       properties:
