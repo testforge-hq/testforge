@@ -402,14 +402,19 @@ func (c *Crawler) crawlPage(ctx context.Context, page playwright.Page, task Craw
 
 	// Wait for page to fully settle - important for SPAs (React, Vue, Angular)
 	// First wait for network idle
-	page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+	if err := page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
 		State:   playwright.LoadStateNetworkidle,
 		Timeout: playwright.Float(10000), // 10 seconds for slow SPAs
-	})
+	}); err != nil {
+		// Log but don't fail - page may still be usable
+		if c.onHeartbeat != nil {
+			c.onHeartbeat(fmt.Sprintf("Warning: wait for networkidle failed for %s: %v", task.URL, err))
+		}
+	}
 
 	// Additional wait for JavaScript frameworks to finish rendering
 	// This catches late-rendering components in React/Vue/Angular apps
-	page.WaitForTimeout(1500)
+	page.WaitForTimeout(1500) // No error return - always succeeds
 
 	loadTime := time.Since(startTime)
 
@@ -421,7 +426,11 @@ func (c *Crawler) crawlPage(ctx context.Context, page playwright.Page, task Craw
 	}
 
 	// Get DOM content for hashing
-	domContent, _ := page.Content()
+	domContent, err := page.Content()
+	if err != nil {
+		result.Error = fmt.Errorf("getting page content: %w", err)
+		return result
+	}
 	domHash := HashDOM(domContent)
 
 	// Take screenshot

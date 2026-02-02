@@ -2,7 +2,9 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -32,13 +34,27 @@ func GetUserID(ctx context.Context) (string, bool) {
 // AuthMiddleware handles API key authentication
 // For Phase 1, this is a simple API key check. In production, integrate with OAuth/JWT.
 type AuthMiddleware struct {
-	// In production, this would be a service that validates API keys
-	// For now, we'll use a simple header check
+	devMode bool // Only allow unauthenticated access in explicit dev mode
 }
 
 // NewAuthMiddleware creates a new auth middleware
 func NewAuthMiddleware() *AuthMiddleware {
-	return &AuthMiddleware{}
+	// Only enable dev mode if explicitly set via environment variable
+	devMode := os.Getenv("TESTFORGE_DEV_MODE") == "true"
+	return &AuthMiddleware{devMode: devMode}
+}
+
+// writeJSONError writes a JSON error response for auth failures
+func writeJSONError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{
+		"success": false,
+		"error": map[string]string{
+			"code":    code,
+			"message": message,
+		},
+	})
 }
 
 // Handler returns the middleware handler
@@ -60,39 +76,50 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 			}
 		}
 
-		// For development, allow requests without API key
-		// In production, this should be removed
+		// Handle missing API key
 		if apiKey == "" {
-			// Check for tenant header for development
-			tenantHeader := r.Header.Get("X-Tenant-ID")
-			if tenantHeader != "" {
-				tenantID, err := uuid.Parse(tenantHeader)
-				if err == nil {
-					ctx := context.WithValue(r.Context(), ContextKeyTenantID, tenantID)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
+			// In dev mode only, allow requests with just tenant header
+			if m.devMode {
+				tenantHeader := r.Header.Get("X-Tenant-ID")
+				if tenantHeader != "" {
+					tenantID, err := uuid.Parse(tenantHeader)
+					if err == nil {
+						ctx := context.WithValue(r.Context(), ContextKeyTenantID, tenantID)
+						next.ServeHTTP(w, r.WithContext(ctx))
+						return
+					}
 				}
+				// In dev mode, allow unauthenticated access (for testing)
+				next.ServeHTTP(w, r)
+				return
 			}
 
-			// Allow unauthenticated access in development
-			next.ServeHTTP(w, r)
+			// In production, require authentication
+			writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "API key required")
 			return
 		}
 
-		// TODO: Validate API key against database
-		// For now, extract tenant ID from API key format: tf_<tenant_id>_<random>
+		// Validate API key format: tf_<tenant_id>_<random>
+		// The random part should be at least 16 characters for security
 		parts := strings.Split(apiKey, "_")
-		if len(parts) >= 3 && parts[0] == "tf" {
-			tenantID, err := uuid.Parse(parts[1])
-			if err == nil {
-				ctx := context.WithValue(r.Context(), ContextKeyTenantID, tenantID)
-				ctx = context.WithValue(ctx, ContextKeyAPIKey, apiKey)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			}
+		if len(parts) < 3 || parts[0] != "tf" || len(parts[2]) < 16 {
+			writeJSONError(w, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid API key format")
+			return
 		}
 
-		http.Error(w, "Invalid API key", http.StatusUnauthorized)
+		// Parse and validate tenant ID
+		tenantID, err := uuid.Parse(parts[1])
+		if err != nil {
+			writeJSONError(w, http.StatusUnauthorized, "INVALID_API_KEY", "Invalid tenant ID in API key")
+			return
+		}
+
+		// TODO: In production, validate the API key against the database
+		// For now, we trust the format validation above
+
+		ctx := context.WithValue(r.Context(), ContextKeyTenantID, tenantID)
+		ctx = context.WithValue(ctx, ContextKeyAPIKey, apiKey)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

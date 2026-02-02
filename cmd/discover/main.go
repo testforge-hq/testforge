@@ -23,14 +23,16 @@ func main() {
 	output := flag.String("output", "", "Output file for JSON result (empty for stdout)")
 	headless := flag.Bool("headless", true, "Run browser in headless mode")
 
-	// Auth flags
+	// Auth flags - credentials should come from environment variables for security
 	loginURL := flag.String("login-url", "", "Login page URL for credential auth")
-	username := flag.String("username", "", "Username for login")
-	password := flag.String("password", "", "Password for login")
 	usernameSelector := flag.String("username-selector", "#username", "CSS selector for username field")
 	passwordSelector := flag.String("password-selector", "#password", "CSS selector for password field")
 	submitSelector := flag.String("submit-selector", "button[type='submit']", "CSS selector for submit button")
 	successIndicator := flag.String("success-indicator", "", "URL pattern or selector to verify login success")
+
+	// Get credentials from environment variables (never from CLI args for security)
+	username := os.Getenv("TESTFORGE_AUTH_USERNAME")
+	password := os.Getenv("TESTFORGE_AUTH_PASSWORD")
 
 	flag.Parse()
 
@@ -54,7 +56,7 @@ func main() {
 
 	// Build auth config if login URL is provided
 	var authConfig *domain.AuthConfig
-	if *loginURL != "" && *username != "" && *password != "" {
+	if *loginURL != "" && username != "" && password != "" {
 		fmt.Printf("Authentication enabled: %s\n", *loginURL)
 		authConfig = &domain.AuthConfig{
 			Type: domain.AuthTypeCredentials,
@@ -63,8 +65,8 @@ func main() {
 				UsernameSelector: *usernameSelector,
 				PasswordSelector: *passwordSelector,
 				SubmitSelector:   *submitSelector,
-				Username:         *username,
-				Password:         *password,
+				Username:         username,
+				Password:         password,
 				SuccessIndicator: *successIndicator,
 				WaitAfterLogin:   2000,
 			},

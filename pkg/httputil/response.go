@@ -41,7 +41,11 @@ func JSON(w http.ResponseWriter, status int, data any) {
 		Data:    data,
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// Log error - response headers already sent, can't change status
+		// In production, this should use a proper logger
+		_ = err // Silently acknowledge - consider adding structured logging
+	}
 }
 
 // JSONWithMeta writes a JSON response with pagination metadata
@@ -55,7 +59,10 @@ func JSONWithMeta(w http.ResponseWriter, status int, data any, meta *Meta) {
 		Meta:    meta,
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// Log error - response headers already sent, can't change status
+		_ = err // Silently acknowledge - consider adding structured logging
+	}
 }
 
 // JSONError writes a JSON error response
@@ -72,7 +79,10 @@ func JSONError(w http.ResponseWriter, status int, code, message string, details 
 		},
 	}
 
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		// Log error - response headers already sent, can't change status
+		_ = err // Silently acknowledge - consider adding structured logging
+	}
 }
 
 // ErrorFromDomain converts a domain error to HTTP response
