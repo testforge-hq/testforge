@@ -407,3 +407,314 @@ func TestTruncateString(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeClient_GetModel(t *testing.T) {
+	client, err := NewClaudeClient(Config{
+		APIKey: "test-key",
+		Model:  "claude-3-opus-20240229",
+	})
+	if err != nil {
+		t.Fatalf("NewClaudeClient() error = %v", err)
+	}
+
+	model := client.GetModel()
+	if model != "claude-3-opus-20240229" {
+		t.Errorf("GetModel() = %s, want claude-3-opus-20240229", model)
+	}
+}
+
+func TestClaudeClient_GetModel_Default(t *testing.T) {
+	client, err := NewClaudeClient(Config{
+		APIKey: "test-key",
+		// Model not set, should use default
+	})
+	if err != nil {
+		t.Fatalf("NewClaudeClient() error = %v", err)
+	}
+
+	model := client.GetModel()
+	// Should have default model
+	if model == "" {
+		t.Error("GetModel() should return default model, not empty string")
+	}
+}
+
+func TestClaudeClient_GetCacheSize(t *testing.T) {
+	client, err := NewClaudeClient(Config{
+		APIKey:    "test-key",
+		CacheSize: 500,
+		CacheTTL:  time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewClaudeClient() error = %v", err)
+	}
+
+	// Initially cache should be empty
+	size := client.GetCacheSize()
+	if size != 0 {
+		t.Errorf("GetCacheSize() = %d, want 0 for empty cache", size)
+	}
+}
+
+func TestClaudeClient_GetCacheSize_WithEntries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := Response{
+			Content: []ContentBlock{{Type: "text", Text: "response"}},
+			Usage:   Usage{InputTokens: 10, OutputTokens: 5},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client, _ := NewClaudeClient(Config{
+		APIKey:    "test-key",
+		BaseURL:   server.URL,
+		CacheSize: 100,
+		CacheTTL:  time.Hour,
+	})
+
+	ctx := context.Background()
+
+	// Make requests that will be cached
+	client.CompleteWithOptions(ctx, "system1", "prompt1", 0.3, true)
+	client.CompleteWithOptions(ctx, "system2", "prompt2", 0.3, true)
+
+	size := client.GetCacheSize()
+	if size != 2 {
+		t.Errorf("GetCacheSize() = %d, want 2", size)
+	}
+}
+
+func TestClaudeClient_IsHealthy_Closed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := Response{
+			Content: []ContentBlock{{Type: "text", Text: "response"}},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client, _ := NewClaudeClient(Config{
+		APIKey:                "test-key",
+		BaseURL:               server.URL,
+		CircuitBreakerEnabled: true,
+	})
+
+	// Circuit should be closed (healthy) initially
+	if !client.IsHealthy() {
+		t.Error("client should be healthy when circuit is closed")
+	}
+
+	state := client.GetCircuitBreakerState()
+	if state != "closed" {
+		t.Errorf("circuit state = %s, want closed", state)
+	}
+}
+
+func TestClaudeClient_GetCircuitBreakerState_NoBreaker(t *testing.T) {
+	client, _ := NewClaudeClient(Config{
+		APIKey:                "test-key",
+		CircuitBreakerEnabled: false,
+	})
+
+	state := client.GetCircuitBreakerState()
+	if state != "disabled" {
+		t.Errorf("GetCircuitBreakerState() = %s, want disabled", state)
+	}
+}
+
+func TestClaudeClient_IsHealthy_NoBreaker(t *testing.T) {
+	client, _ := NewClaudeClient(Config{
+		APIKey:                "test-key",
+		CircuitBreakerEnabled: false,
+	})
+
+	// Should always be healthy when circuit breaker is disabled
+	if !client.IsHealthy() {
+		t.Error("client should be healthy when circuit breaker is disabled")
+	}
+}
+
+func TestDefaultConfig(t *testing.T) {
+	config := DefaultConfig()
+
+	if config.Model == "" {
+		t.Error("Model should have default value")
+	}
+	if config.MaxTokens == 0 {
+		t.Error("MaxTokens should have default value")
+	}
+	if config.BaseURL == "" {
+		t.Error("BaseURL should have default value")
+	}
+	if config.Timeout == 0 {
+		t.Error("Timeout should have default value")
+	}
+}
+
+func TestLRUCache_MoveToEnd(t *testing.T) {
+	cache := NewLRUCache(3, time.Hour)
+
+	// Add entries
+	cache.Set("key1", []byte("value1"))
+	cache.Set("key2", []byte("value2"))
+	cache.Set("key3", []byte("value3"))
+
+	// Access key1 to move it to the end
+	cache.Get("key1")
+
+	// Add new entry - should evict key2 (oldest not accessed)
+	cache.Set("key4", []byte("value4"))
+
+	// key1 should still exist (was moved to end)
+	if _, ok := cache.Get("key1"); !ok {
+		t.Error("key1 should still exist after access")
+	}
+
+	// key2 should be evicted
+	if _, ok := cache.Get("key2"); ok {
+		t.Error("key2 should have been evicted")
+	}
+}
+
+func TestClaudeClient_CompleteJSON_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := Response{
+			Content: []ContentBlock{{
+				Type: "text",
+				Text: "This is not valid JSON",
+			}},
+			Usage: Usage{InputTokens: 10, OutputTokens: 5},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client, _ := NewClaudeClient(Config{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+	})
+
+	var result struct {
+		Name string `json:"name"`
+	}
+
+	ctx := context.Background()
+	_, err := client.CompleteJSON(ctx, "Return JSON", "Give me data", &result)
+	if err == nil {
+		t.Error("CompleteJSON should return error for invalid JSON")
+	}
+}
+
+func TestClaudeClient_CompleteWithOptions_CacheDisabled(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		resp := Response{
+			Content: []ContentBlock{{Type: "text", Text: "response"}},
+			Usage:   Usage{InputTokens: 5, OutputTokens: 3},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client, _ := NewClaudeClient(Config{
+		APIKey:    "test-key",
+		BaseURL:   server.URL,
+		CacheSize: 100,
+		CacheTTL:  time.Hour,
+	})
+
+	ctx := context.Background()
+
+	// Both requests should hit server when cache is disabled
+	_, _, err := client.CompleteWithOptions(ctx, "system", "user", 0.3, false)
+	if err != nil {
+		t.Fatalf("first request error = %v", err)
+	}
+
+	_, _, err = client.CompleteWithOptions(ctx, "system", "user", 0.3, false)
+	if err != nil {
+		t.Fatalf("second request error = %v", err)
+	}
+
+	if requestCount != 2 {
+		t.Errorf("expected 2 requests (cache disabled), got %d", requestCount)
+	}
+}
+
+func TestClaudeClient_Error_Response(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":    "invalid_request_error",
+				"message": "Bad request",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, _ := NewClaudeClient(Config{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+	})
+
+	ctx := context.Background()
+	_, _, err := client.CompleteWithOptions(ctx, "system", "user", 0.3, false)
+	if err == nil {
+		t.Error("CompleteWithOptions should return error for bad request")
+	}
+}
+
+func TestExtractJSON_CodeBlockTypes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "json code block",
+			input: "```json\n{\"key\": \"value\"}\n```",
+			want:  `{"key": "value"}`,
+		},
+		{
+			name:  "generic code block",
+			input: "```\n{\"key\": \"value\"}\n```",
+			want:  `{"key": "value"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractJSON(tt.input)
+			if got != tt.want {
+				t.Errorf("extractJSON() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLRUCache_Set_UpdateExisting(t *testing.T) {
+	cache := NewLRUCache(10, time.Hour)
+
+	// Set initial value
+	cache.Set("key", []byte("value1"))
+
+	// Update value
+	cache.Set("key", []byte("value2"))
+
+	// Should get updated value
+	v, ok := cache.Get("key")
+	if !ok {
+		t.Error("should get updated key")
+	}
+	if string(v) != "value2" {
+		t.Errorf("value = %q, want value2", string(v))
+	}
+
+	// Size should still be 1
+	if cache.Size() != 1 {
+		t.Errorf("Size() = %d, want 1", cache.Size())
+	}
+}
