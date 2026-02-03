@@ -68,8 +68,8 @@ type Customer struct {
 	DefaultSource string           `json:"default_source"`
 }
 
-// Subscription represents a Stripe subscription
-type Subscription struct {
+// StripeSubscription represents a Stripe subscription API response
+type StripeSubscription struct {
 	ID                   string            `json:"id"`
 	Customer             string            `json:"customer"`
 	Status               string            `json:"status"`
@@ -209,9 +209,9 @@ func (c *StripeClient) UpdateCustomer(ctx context.Context, customerID string, da
 }
 
 // CreateSubscription creates a new subscription
-func (c *StripeClient) CreateSubscription(ctx context.Context, customerID, priceID string, opts *SubscriptionOptions) (*Subscription, error) {
+func (c *StripeClient) CreateSubscription(ctx context.Context, customerID, priceID string, opts *SubscriptionOptions) (*StripeSubscription, error) {
 	data := url.Values{
-		"customer":       {customerID},
+		"customer":        {customerID},
 		"items[0][price]": {priceID},
 	}
 
@@ -227,7 +227,7 @@ func (c *StripeClient) CreateSubscription(ctx context.Context, customerID, price
 		}
 	}
 
-	var subscription Subscription
+	var subscription StripeSubscription
 	if err := c.post(ctx, "/v1/subscriptions", data, &subscription); err != nil {
 		return nil, err
 	}
@@ -243,8 +243,8 @@ type SubscriptionOptions struct {
 }
 
 // GetSubscription retrieves a subscription
-func (c *StripeClient) GetSubscription(ctx context.Context, subscriptionID string) (*Subscription, error) {
-	var subscription Subscription
+func (c *StripeClient) GetSubscription(ctx context.Context, subscriptionID string) (*StripeSubscription, error) {
+	var subscription StripeSubscription
 	if err := c.get(ctx, "/v1/subscriptions/"+subscriptionID, &subscription); err != nil {
 		return nil, err
 	}
@@ -252,8 +252,8 @@ func (c *StripeClient) GetSubscription(ctx context.Context, subscriptionID strin
 }
 
 // UpdateSubscription updates a subscription
-func (c *StripeClient) UpdateSubscription(ctx context.Context, subscriptionID string, data url.Values) (*Subscription, error) {
-	var subscription Subscription
+func (c *StripeClient) UpdateSubscription(ctx context.Context, subscriptionID string, data url.Values) (*StripeSubscription, error) {
+	var subscription StripeSubscription
 	if err := c.post(ctx, "/v1/subscriptions/"+subscriptionID, data, &subscription); err != nil {
 		return nil, err
 	}
@@ -261,14 +261,14 @@ func (c *StripeClient) UpdateSubscription(ctx context.Context, subscriptionID st
 }
 
 // CancelSubscription cancels a subscription
-func (c *StripeClient) CancelSubscription(ctx context.Context, subscriptionID string, cancelAtPeriodEnd bool) (*Subscription, error) {
+func (c *StripeClient) CancelSubscription(ctx context.Context, subscriptionID string, cancelAtPeriodEnd bool) (*StripeSubscription, error) {
 	if cancelAtPeriodEnd {
 		return c.UpdateSubscription(ctx, subscriptionID, url.Values{
 			"cancel_at_period_end": {"true"},
 		})
 	}
 
-	var subscription Subscription
+	var subscription StripeSubscription
 	if err := c.delete(ctx, "/v1/subscriptions/"+subscriptionID, &subscription); err != nil {
 		return nil, err
 	}

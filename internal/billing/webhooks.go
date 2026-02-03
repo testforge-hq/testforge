@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -180,14 +179,16 @@ func (h *WebhookHandler) processEvent(ctx context.Context, event *WebhookEvent) 
 }
 
 func (h *WebhookHandler) handleSubscriptionCreated(ctx context.Context, event *WebhookEvent) error {
-	var sub Subscription
-	if err := json.Unmarshal(event.Data.Object, &sub); err != nil {
+	var stripeSub struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(event.Data.Object, &stripeSub); err != nil {
 		return err
 	}
 
 	// Sync from Stripe
-	if sub.StripeSubscriptionID != nil {
-		return h.subService.SyncFromStripe(ctx, *sub.StripeSubscriptionID)
+	if stripeSub.ID != "" {
+		return h.subService.SyncFromStripe(ctx, stripeSub.ID)
 	}
 	return nil
 }

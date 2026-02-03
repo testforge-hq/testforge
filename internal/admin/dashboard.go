@@ -4,6 +4,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -458,7 +459,3 @@ func (ds *DashboardService) GetRecentActivity(ctx context.Context, limit int) ([
 	return entries, err
 }
 
-// Helper for formatting query
-func fmt(s string, args ...interface{}) string {
-	return s
-}
