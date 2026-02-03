@@ -529,6 +529,22 @@ func TestAuthMiddlewareOptions(t *testing.T) {
 			t.Error("WithSkipDBLookup(true) should set skipDBLookup to true")
 		}
 	})
+
+	t.Run("WithAPIKeyRepository", func(t *testing.T) {
+		// Test that option function works (nil is valid for this test)
+		m := NewAuthMiddleware(WithAPIKeyRepository(nil))
+		if m.apiKeyRepo != nil {
+			t.Error("WithAPIKeyRepository(nil) should set apiKeyRepo to nil")
+		}
+	})
+
+	t.Run("WithRedisClient", func(t *testing.T) {
+		// Test that option function works (nil is valid for this test)
+		m := NewAuthMiddleware(WithRedisClient(nil))
+		if m.redisClient != nil {
+			t.Error("WithRedisClient(nil) should set redisClient to nil")
+		}
+	})
 }
 
 func TestAuthError_Error(t *testing.T) {
@@ -675,6 +691,261 @@ func TestParseAPIKeyFormat(t *testing.T) {
 				if got != tt.wantTenant {
 					t.Errorf("parseAPIKeyFormat() = %v, want %v", got, tt.wantTenant)
 				}
+			}
+		})
+	}
+}
+
+func TestGetClientIP(t *testing.T) {
+	m := NewAuthMiddleware()
+
+	tests := []struct {
+		name          string
+		xForwardedFor string
+		xRealIP       string
+		remoteAddr    string
+		wantIP        string
+	}{
+		{
+			name:          "X-Forwarded-For single IP",
+			xForwardedFor: "192.168.1.100",
+			wantIP:        "192.168.1.100",
+		},
+		{
+			name:          "X-Forwarded-For multiple IPs (first is client)",
+			xForwardedFor: "192.168.1.100, 10.0.0.1, 172.16.0.1",
+			wantIP:        "192.168.1.100",
+		},
+		{
+			name:    "X-Real-IP only",
+			xRealIP: "10.0.0.50",
+			wantIP:  "10.0.0.50",
+		},
+		{
+			name:       "RemoteAddr fallback",
+			remoteAddr: "172.16.0.1:12345",
+			wantIP:     "172.16.0.1",
+		},
+		{
+			name:          "X-Forwarded-For takes precedence",
+			xForwardedFor: "192.168.1.100",
+			xRealIP:       "10.0.0.50",
+			remoteAddr:    "172.16.0.1:12345",
+			wantIP:        "192.168.1.100",
+		},
+		{
+			name:       "RemoteAddr without port",
+			remoteAddr: "192.168.1.1",
+			wantIP:     "", // net.SplitHostPort fails without port
+		},
+		{
+			name:          "Invalid IP in X-Forwarded-For falls through",
+			xForwardedFor: "not-an-ip",
+			xRealIP:       "10.0.0.50",
+			wantIP:        "10.0.0.50",
+		},
+		{
+			name:       "Invalid IP in X-Real-IP falls through to RemoteAddr",
+			xRealIP:    "not-an-ip",
+			remoteAddr: "10.20.30.40:5000",
+			wantIP:     "10.20.30.40",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/test", nil)
+			if tt.xForwardedFor != "" {
+				req.Header.Set("X-Forwarded-For", tt.xForwardedFor)
+			}
+			if tt.xRealIP != "" {
+				req.Header.Set("X-Real-IP", tt.xRealIP)
+			}
+			if tt.remoteAddr != "" {
+				req.RemoteAddr = tt.remoteAddr
+			}
+
+			got := m.getClientIP(req)
+			gotStr := ""
+			if got != nil {
+				gotStr = got.String()
+			}
+			if gotStr != tt.wantIP {
+				t.Errorf("getClientIP() = %v, want %v", gotStr, tt.wantIP)
+			}
+		})
+	}
+}
+
+func TestValidateAPIKey_SkipDBLookup(t *testing.T) {
+	m := NewAuthMiddleware(WithSkipDBLookup(true))
+
+	result, err := m.validateAPIKey(context.Background(), "any-api-key")
+	if err != nil {
+		t.Errorf("validateAPIKey() error = %v, want nil", err)
+	}
+	if result != nil {
+		t.Errorf("validateAPIKey() = %v, want nil", result)
+	}
+}
+
+func TestValidateAPIKey_NilAPIKeyRepo(t *testing.T) {
+	m := NewAuthMiddleware() // No API key repo set
+
+	result, err := m.validateAPIKey(context.Background(), "any-api-key")
+	if err != nil {
+		t.Errorf("validateAPIKey() error = %v, want nil", err)
+	}
+	if result != nil {
+		t.Errorf("validateAPIKey() = %v, want nil", result)
+	}
+}
+
+func TestAuthMiddleware_Handler_DevModeInvalidTenantHeader(t *testing.T) {
+	m := NewAuthMiddleware(WithDevMode(true))
+
+	var hasTenant bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, hasTenant = GetTenantID(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Set an invalid tenant ID in header
+	req := httptest.NewRequest("GET", "/api/v1/projects", nil)
+	req.Header.Set("X-Tenant-ID", "not-a-valid-uuid")
+
+	rr := httptest.NewRecorder()
+	m.Handler(handler).ServeHTTP(rr, req)
+
+	// Should still succeed but without tenant ID
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if hasTenant {
+		t.Error("invalid tenant header should not set tenant in context")
+	}
+}
+
+func TestAuthMiddleware_WriteJSONError(t *testing.T) {
+	rr := httptest.NewRecorder()
+	writeJSONError(rr, http.StatusUnauthorized, "TEST_CODE", "Test message")
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("Content-Type = %s, want application/json", contentType)
+	}
+
+	body := rr.Body.String()
+	if body == "" {
+		t.Error("body should not be empty")
+	}
+}
+
+func TestAuthMiddleware_Handler_MetricsEndpoint(t *testing.T) {
+	m := NewAuthMiddleware()
+
+	called := false
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rr := httptest.NewRecorder()
+
+	m.Handler(handler).ServeHTTP(rr, req)
+
+	if !called {
+		t.Error("handler should be called for /metrics")
+	}
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestAuthMiddleware_Handler_DocsEndpoints(t *testing.T) {
+	m := NewAuthMiddleware()
+
+	endpoints := []string{
+		"/api/v1/docs",
+		"/api/v1/docs/swagger.json",
+		"/swagger",
+		"/swagger/index.html",
+	}
+
+	for _, path := range endpoints {
+		t.Run(path, func(t *testing.T) {
+			called := false
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			})
+
+			req := httptest.NewRequest("GET", path, nil)
+			rr := httptest.NewRecorder()
+
+			m.Handler(handler).ServeHTTP(rr, req)
+
+			if !called {
+				t.Errorf("handler should be called for %s", path)
+			}
+		})
+	}
+}
+
+func TestAuthMiddleware_Handler_AuthorizationHeaderFormats(t *testing.T) {
+	tenantID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
+	validAPIKey := "tf_" + tenantID.String() + "_abcdefghij123456"
+
+	m := NewAuthMiddleware(WithSkipDBLookup(true))
+
+	tests := []struct {
+		name       string
+		authHeader string
+		wantStatus int
+	}{
+		{
+			name:       "Bearer token",
+			authHeader: "Bearer " + validAPIKey,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "bearer lowercase not supported",
+			authHeader: "bearer " + validAPIKey,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "Basic auth (not supported)",
+			authHeader: "Basic dXNlcjpwYXNz",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "empty auth header",
+			authHeader: "",
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+
+			req := httptest.NewRequest("GET", "/api/v1/projects", nil)
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+
+			rr := httptest.NewRecorder()
+			m.Handler(handler).ServeHTTP(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rr.Code, tt.wantStatus)
 			}
 		})
 	}
